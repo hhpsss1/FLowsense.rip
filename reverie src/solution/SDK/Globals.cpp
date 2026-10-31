@@ -111,7 +111,7 @@ void Entry_t::Fill(HMODULE m) {
 	while (!GetModuleHandleA(xs("navsystem.dll")))
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-	Logger->Attach(xs("customflow"));
+	Logger->Attach(xs("Reverie Reborn (skinvvvalker rework)"));
 
 	Memory->Modules.Fill();
 	Valve.Fill();

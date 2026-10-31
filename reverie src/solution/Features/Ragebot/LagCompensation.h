@@ -9,6 +9,7 @@
 #include <span>
 #include <unordered_map>
 #include <vector>
+#include <unordered_set>
 
 struct RageHitbox_t;
 
@@ -87,13 +88,15 @@ class CLagRecordScope {
 };
 
 class CLagCompensation {
-  private:
+private:
 	struct HitboxCache_t {
 		CModel* model = nullptr;
 		uintptr_t context = 0;
 		uint8_t set = 0;
 		std::vector<LagHitbox_t> hitboxes;
 	};
+
+	int extrapolation_tick = -1;
 
 	int server_tick = -1;
 	uint64_t record_revision = 0;
@@ -104,13 +107,16 @@ class CLagCompensation {
 	std::vector<HitboxCache_t> hitbox_cache;
 	std::unordered_map<int, LagRecord> extrapolated_records;
 
+	std::unordered_set<int> extrapolation_tried;
+
 	const std::vector<LagHitbox_t>* GetHitboxes(CSkeletonInstance* skeleton, int count);
 	void BuildGeometry(LagRecord& record);
 	bool PredictMovement(LagRecord& record, int ticks);
 	bool Extrapolate(LagRecord& record, const LagRecord& source, const LagRecord& previous, int ticks);
 	void RemoveInvalidRecords();
+	void TryExtrapolate(int handle, int processing_tick);
 
-  public:
+public:
 	std::unordered_map<int, std::deque<LagRecord>> lag_records;
 
 	bool RecordDataIntoTrack(C_CSPlayerPawn* player, LagRecord* record, int tick, const LagRecord* previous = nullptr);

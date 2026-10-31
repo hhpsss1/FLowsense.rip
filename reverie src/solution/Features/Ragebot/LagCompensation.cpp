@@ -296,33 +296,44 @@ bool CLagCompensation::Extrapolate(LagRecord& record, const LagRecord& source, c
 
 void CLagCompensation::ExtrapolateRecords(int processing_tick) {
 	this->extrapolated_records.clear();
-	if (processing_tick < 0 || !Config::Get<bool>(Vars::Ragebot::Extrapolation))
+	this->extrapolation_tick = Config::Get<bool>(Vars::Ragebot::Extrapolation) ? processing_tick : -1;
+}
+
+void CLagCompensation::TryExtrapolate(int handle, int processing_tick) {
+	const auto found = this->lag_records.find(handle);
+
+	if (found == this->lag_records.end() || found->second.size() < 2)
 		return;
 
+	const auto& records = found->second;
 	const int limit = std::clamp(Config::Get<int>(Vars::Ragebot::ExtrapolationTicks), 1, 8);
-	for (const auto& [handle, records] : this->lag_records) {
-		if (records.size() < 2)
-			continue;
+	const auto& source = records.back();
 
-		const auto& source = records.back();
-		if ((source.m_fFlags & FL_ONGROUND) && source.m_vecVelocity.LengthSqr() == 0.f)
-			continue;
+	if ((source.m_fFlags & FL_ONGROUND) && source.m_vecVelocity.LengthSqr() == 0.f)
+		return;
 
-		const int ticks = processing_tick - source.m_nSimulationTick;
-		auto player = CBaseHandle(handle).get<C_CSPlayerPawn>();
-		if (ticks < 1 || ticks > limit || !ValidRecord(&source, processing_tick) || !player || player != source.player ||
-			!player->Alive() || !ctx.pawn || !player->Enemy(ctx.pawn) || player->m_flLastSpawnTimeIndex() != source.m_flSpawnTime ||
-			player->m_flSimulationTime() != source.m_flSimulationTime || !player->m_vecBaseVelocity().Zero())
-			continue;
+	const int ticks = processing_tick - source.m_nSimulationTick;
+	auto player = CBaseHandle(handle).get<C_CSPlayerPawn>();
 
-		auto& record = this->extrapolated_records[handle];
-		if (!this->Extrapolate(record, source, records[records.size() - 2], ticks))
-			this->extrapolated_records.erase(handle);
-	}
+	if (ticks < 1 || ticks > limit || !ValidRecord(&source, processing_tick) || !player || player != source.player
+		|| !player->Alive() || !ctx.pawn || !player->Enemy(ctx.pawn) || player->m_flLastSpawnTimeIndex() != source.m_flSpawnTime
+			|| player->m_flSimulationTime() != source.m_flSimulationTime || !player->m_vecBaseVelocity().Zero())
+				return;
+
+	auto& record = this->extrapolated_records[handle];
+	if (!this->Extrapolate(record, source, records[records.size() - 2], ticks))
+		this->extrapolated_records.erase(handle);
 }
 
 LagRecord* CLagCompensation::GetExtrapolatedRecord(C_CSPlayerPawn* player, int processing_tick) {
-	auto record = this->extrapolated_records.find(player->GetHandle().ToInt());
+	if (processing_tick < 0 || processing_tick != this->extrapolation_tick)
+		return nullptr;
+
+	const int handle = player->GetHandle().ToInt();
+	if (this->extrapolation_tried.insert(handle).second)
+		this->TryExtrapolate(handle, processing_tick);
+
+	auto record = this->extrapolated_records.find(handle);
 	if (record == this->extrapolated_records.end() || record->second.player != player ||
 		record->second.m_nSimulationTick != processing_tick || !ValidRecord(&record->second, processing_tick))
 		return nullptr;

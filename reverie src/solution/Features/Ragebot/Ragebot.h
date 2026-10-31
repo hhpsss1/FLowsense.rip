@@ -352,8 +352,7 @@ struct weapon_settings_t {
 	int stop_mode = STOP_EARLY;
 	bool silent_aim = true;
 	bool penetrate_walls = true;
-	bool history = true;
-	bool extended_backtrack = false;
+	// no backtrack
 	bool remove_recoil = true;
 	bool strict_hitchance = true;
 	bool zeusbot = false;
@@ -366,6 +365,7 @@ struct weapon_settings_t {
 	float body_point_scale = 0.7f;
 	float minimum_damage = 100.f;
 	float maximum_fov = 180.f;
+	float maximum_distance = 0.f;
 
 	bool CanPredictStop(bool grounded, float horizontal_speed_squared) const {
 		return (stop_mode & STOP_EARLY) && grounded && horizontal_speed_squared > 64.f;
@@ -400,10 +400,7 @@ struct ScannedPoint_t {
 	float hitchance = -1.f;
 	size_t debug_index = 0;
 
-	// [FIX] Сравнение сначала по УРОНУ, потом по приоритету. Раньше priority доминировал:
-	// центр головы всегда получал (phase + 10), мультипойнт — фазу минус, и даже точка
-	// с бОльшим уроном не могла заменить центр -> "стреляет только по центру".
-	bool operator<(const ScannedPoint_t& other) const { return damage != other.damage ? damage > other.damage : priority > other.priority; }
+	bool operator<(const ScannedPoint_t& other) const { return priority != other.priority ? priority > other.priority : damage > other.damage; }
 };
 
 struct ScannedTarget_t {
@@ -413,12 +410,6 @@ struct ScannedTarget_t {
 	float minimum_damage = 0.f;
 	float hitchance = 0.f;
 	bool has_damage = false;
-
-	// [FIX] SOFT MIN DAMAGE: true, когда Force Shot включён явнО или когда
-	// верхней границей урона (броня/дистанция/включённые хитбоксы) настроенный
-	// Minimum Damage недостижим — в этом случае сканируем как force и стреляем
-	// в лучшую доступную точку (урон > 0), не отбрасывая цель целиком.
-	bool force_shot = false;
 };
 
 class CRagebot {
@@ -494,6 +485,10 @@ private:
 	std::vector<AimPoints_t> multipoint_points;
 	bool multipoints_ready = false;
 	std::mutex debug_mutex;
+
+	std::atomic<int64_t> debug_stamp_ms{ 0 };
+	std::atomic<uint64_t> debug_revision{ 0 };
+
 	std::vector<DebugPoint_t> debug_points;
 	std::vector<DebugPoint_t> point_debug;
 	std::vector<AimPoint_t> scan_points;
@@ -558,7 +553,6 @@ private:
 	ScannedTarget_t* SelectTarget();
 	void Zeusbot(CCSGOInput* input);
 	void Knifebot(CCSGOInput* input);
-	void DoubleTap();
 
 	bool CanAutoStop(int tick_offset = 0) const;
 	bool AutoStop(ScannedTarget_t* target, bool prediction = false);

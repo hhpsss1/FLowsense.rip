@@ -62,9 +62,6 @@ void CGui::RenderRagebotContent() {
 	{
 		this->BeginChild(xs("Other"));
 		{
-			this->CheckboxEx(xs("History"), WPN_CFG(bool, History), false, nullptr, 0, [this]() { 
-				this->Checkbox(xs("Extended Backtrack"), WPN_CFG(bool, ExtendedBacktrack)); 
-			});
 			this->CheckboxEx(xs("Extrapolation"), &Config::Get<bool>(Vars::Ragebot::Extrapolation), false, nullptr, 0, [this]() {
 				this->SliderInt(xs("Maximum Ticks"), &Config::Get<int>(Vars::Ragebot::ExtrapolationTicks), 1, 8);
 			});
@@ -89,6 +86,11 @@ void CGui::RenderRagebotContent() {
 		{
 			this->Checkbox(xs("Enable"), &Config::Get<bool>(Vars::Antiaim::Enable));
 			this->Checkbox(xs("At Targets"), &Config::Get<bool>(Vars::Antiaim::AtTargets));
+
+			Color_t* clrs[2] = { &Config::Get<Color_t>(Vars::Antiaim::MouseOverrideColor1), &Config::Get<Color_t>(Vars::Antiaim::MouseOverrideColor2) };
+			this->CheckboxEx(xs("Mouse Override"), &Config::Get<bool>(Vars::Antiaim::MouseOverride), false, clrs, 2, [this]() { 
+				this->SliderFloat(xs("Sensitivity"), &Config::Get<float>(Vars::Antiaim::MouseOverrideSensitivity), 1.f, 200.f, xs("%.f%%")); 
+			});
 
 			this->Dropdown(xs("Pitch"), &Config::Get<int>(Vars::Antiaim::Pitch), { xs("None"), xs("Down"), xs("Up") });
 

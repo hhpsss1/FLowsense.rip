@@ -68,6 +68,11 @@ void CEntityList::OnAdd(CEntityInstance* instance, CBaseHandle handle) {
 		return;
 	}
 
+	if (hash == FnvHash("C_PlantedC4")) {
+		planted_c4 = reinterpret_cast<C_PlantedC4*>(entity);
+		return;
+	}
+
 	if (!entity->IsWeapon())
 		return;
 
@@ -121,6 +126,9 @@ void CEntityList::OnRemove(CEntityInstance* instance, CBaseHandle handle) {
 
 	if (hash == FnvHash("C_CSGameRulesProxy"))
 		game_rules_proxy = nullptr;
+
+	if (hash == FnvHash("C_PlantedC4"))
+		planted_c4 = nullptr;
 }
 
 void CEntityList::ForceUpdate() {
@@ -145,4 +153,5 @@ void CEntityList::Clear() {
 	player_count = 0;
 	grenade_count = 0;
 	weapon_count = 0;
+	planted_c4 = nullptr;
 }

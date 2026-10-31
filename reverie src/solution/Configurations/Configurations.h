@@ -104,8 +104,7 @@ namespace Config {
         SerializeGroup(group_name, int, TicksPerAimpoint, 4); \
         SerializeGroup(group_name, float, BodyPointScale, 70.f); \
         SerializeGroup(group_name, int, TargetSelection, 0); \
-        SerializeGroup(group_name, bool, History, true); \
-        SerializeGroup(group_name, bool, ExtendedBacktrack, false); \
+        /* No backtrack: History / ExtendedBacktrack removed. */ \
         SerializeGroup(group_name, bool, DelayShotEnable, false); \
         SerializeGroup(group_name, int, DelayShot, 1); \
         SerializeGroup(group_name, bool, RemoveRecoil, true); \
@@ -519,6 +518,19 @@ namespace Vars {
     }
 
     namespace Misc {
+        Serialize(bool, Watermark, true);
+        Serialize(bool, WatermarkUsername, true);
+        Serialize(bool, WatermarkPing, true);
+        Serialize(bool, WatermarkFps, true);
+        Serialize(bool, WatermarkSpeed, true);
+        Serialize(bool, WatermarkTime, true);
+        Serialize(int, WatermarkOpacity, 120);
+        Serialize(Color_t, WatermarkAccentColor, Color_t(152, 182, 248, 255));
+
+        Serialize(bool, Indicators, false);
+        SerializeVector(int, IndicatorItems, std::vector<int>(8, 0));
+        Serialize(int, IndicatorOpacity, 120);
+
         Serialize(bool, QuickSwitch, false);
         Serialize(bool, BuyBot, false);
         Serialize(int, BuyBotPrimary, 0);

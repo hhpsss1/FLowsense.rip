@@ -83,7 +83,48 @@ void CGui::Render() {
         Binds::CancelCapture();
     }
 
+    auto draw_widgets = [&]() {
+        ImGuiIO& wio = ImGui::GetIO();
+        ImDrawList* wdl = ImGui::GetForegroundDrawList();
+        if (!Draw || !Draw->initialized || !Var || !Colors)
+            return;
+
+        ImFont* wfont = Var->font.inter[0] ? Var->font.inter[0] : nullptr;
+        if (!wfont)
+            return;
+
+        if (s_widget_watermark) {
+            std::string text = xs("customflow");
+            if (s_watermark_username)
+                text += xs("  |  user");
+            if (s_watermark_ping)
+                text += xs("  |  0 ms");
+            if (s_watermark_fps)
+                text += xs("  |  ") + std::to_string(static_cast<int>(wio.Framerate)) + xs(" fps");
+
+            ImVec2 pos(10.f, 10.f);
+            wdl->AddText(wfont, wfont->LegacySize, pos, Draw->GetClr(Colors->accent, 1.f), text.c_str());
+        }
+
+        if (s_widget_keybind_list) {
+            auto active = Binds::GetActiveList();
+            if (!active.empty()) {
+                float x = wio.DisplaySize.x - 220.f;
+                float y = 10.f;
+                float line_h = wfont->LegacySize + 4.f;
+                wdl->AddRectFilled(ImVec2(x - 8.f, y - 4.f), ImVec2(x + 200.f, y + active.size() * line_h + 4.f), IM_COL32(14, 15, 17, 200), 8.f);
+                for (const auto& bind : active) {
+                    std::string line = bind.name + xs("  [") + bind.key_name + xs("]");
+                    ImU32 col = bind.active ? Draw->GetClr(Colors->accent, 1.f) : Draw->GetClr(Colors->text, 0.8f);
+                    wdl->AddText(wfont, wfont->LegacySize, ImVec2(x, y), col, line.c_str());
+                    y += line_h;
+                }
+            }
+        }
+    };
+
     if (!Draw->opened && !s_closing && this->menu_anim <= 0.001f) {
+        // draw_widgets(); // temporarily disabled for crash test
         ImGui::GetIO().FontGlobalScale = 1.f;
         this->ui_alpha = 0.f;
         this->about_active = false;
@@ -190,62 +231,174 @@ void CGui::Render() {
         Blur::DrawBackgroundBlur(dl, Device, DeviceCtx, style->WindowRounding);
 
         dl->AddRectFilled(pos, pos + size, IM_COL32(13, 14, 14, static_cast<int>(248.f * window_ease)), style->WindowRounding);
-        // sidebar removed - full width content
+        dl->AddRectFilled(pos, ImVec2(pos.x + sidebar_w, pos.y + size.y), IM_COL32(17, 18, 18, static_cast<int>(235.f * window_ease)), style->WindowRounding, ImDrawFlags_RoundCornersLeft);
         DrawOutline(dl, pos, pos + size, style->WindowRounding, window_ease);
 
         if (font_logo) {
             const char* brand = xs("customflow");
             ImVec2 logo_sz = font_logo->CalcTextSizeA(font_logo->LegacySize, FLT_MAX, -1.f, brand);
-            ImVec2 lp = ImVec2(pos.x + 20.f, pos.y + 16.f);
+            ImVec2 lp = ImVec2(pos.x + (sidebar_w - logo_sz.x) * 0.5f, pos.y + 18.f);
             dl->AddText(font_logo, font_logo->LegacySize, lp, Draw->GetClr(Colors->accent, window_ease), brand);
         }
 
-        const float top_sep_y = pos.y + 52.f;
+        const float top_sep_y = pos.y + 54.f;
+        dl->AddLine(ImVec2(pos.x + 14.f, top_sep_y), ImVec2(pos.x + sidebar_w - 14.f, top_sep_y), IM_COL32(36, 37, 38, static_cast<int>(255.f * window_ease)), 1.f);
+
+        float side_y = top_sep_y + 14.f;
+        const float tab_pad_x = 10.f;
+        const float tab_w = sidebar_w - (tab_pad_x * 2.f);
 
         ImGui::BeginDisabled(about_blocking);
 
-        float top_tab_x = pos.x + 150.f;
-        const float top_tab_y = pos.y + 16.f;
-        const float top_tab_h = 28.f;
-
         for (auto& cat : Var->gui.categories) {
+            if (font_sub) {
+                dl->AddText(font_sub, font_sub->LegacySize, ImVec2(pos.x + tab_pad_x + 6.f, side_y), Draw->GetClr(Colors->text_secondary, 0.35f * window_ease), cat.label.c_str());
+                side_y += font_sub->LegacySize + 8.f;
+            }
+
             for (auto& tab : cat.tabs) {
                 const bool is_tab_sel = (Var->gui.active_tab_id == tab.id);
-                ImVec2 tsz = font_bold ? font_bold->CalcTextSizeA(font_bold->LegacySize, FLT_MAX, -1.f, tab.label.c_str()) : ImVec2(0,0);
-                const float btn_w = tsz.x + 24.f;
-
-                ImVec2 t_min(top_tab_x, top_tab_y);
-                ImVec2 t_max(top_tab_x + btn_w, top_tab_y + top_tab_h);
+                const float tab_h = 32.f;
+                ImVec2 t_min(pos.x + tab_pad_x, side_y);
+                ImVec2 t_max(t_min.x + tab_w, t_min.y + tab_h);
 
                 ImGui::SetCursorScreenPos(t_min);
                 ImGui::PushID(tab.id * 100);
-                ImGui::InvisibleButton(xs("##top_main_tab"), ImVec2(btn_w, top_tab_h));
+                ImGui::InvisibleButton(xs("##side_tab"), ImVec2(tab_w, tab_h));
+
                 const bool t_hov = ImGui::IsItemHovered();
                 if (ImGui::IsItemClicked())
                     Var->gui.active_tab_id = tab.id;
-                ImGui::PopID();
 
-                ImColor text_c = is_tab_sel ? ImColor(Colors->text.Value) : ImColor(Colors->text_secondary.Value);
-                const float alpha_factor = is_tab_sel ? 1.0f : (t_hov ? 0.85f : 0.55f);
-                text_c.Value.w = alpha_factor * window_ease;
+                ImGuiID anim_id = ImGui::GetID(xs("##side_t_anim"));
+                CSideAnim* ta = this->AnimContainer(&ta, anim_id);
+                ta->hover = ImClamp(ta->hover + this->FixedSpeed(14.f) * ((t_hov && !is_tab_sel) ? 1.f : -1.f), 0.f, 1.f);
+                ta->select = ImClamp(ta->select + this->FixedSpeed(14.f) * (is_tab_sel ? 1.f : -1.f), 0.f, 1.f);
+                ta->expand = ImClamp(ta->expand + this->FixedSpeed(14.f) * (is_tab_sel ? 1.f : -1.f), 0.f, 1.f);
 
-                if (font_bold)
-                    dl->AddText(font_bold, font_bold->LegacySize, ImVec2(t_min.x + 12.f, t_min.y + (top_tab_h - tsz.y) * 0.5f), Draw->GetClr(text_c), tab.label.c_str());
-
-                if (is_tab_sel) {
-                    const float line_w = tsz.x + 8.f;
-                    const float line_y = top_tab_y + top_tab_h + 2.f;
-                    dl->AddLine(ImVec2(t_min.x + 12.f, line_y), ImVec2(t_min.x + 12.f + line_w, line_y), Draw->GetClr(Colors->accent, window_ease), 2.f);
+                if (ta->select > 0.01f || ta->hover > 0.01f) {
+                    float bg_a = (ta->select * 0.16f + ta->hover * 0.06f) * window_ease;
+                    Draw->RectFilled(dl, t_min, t_max, Draw->GetClr(Colors->accent, bg_a), 6.f);
                 }
 
-                top_tab_x += btn_w + 8.f;
+                const float alpha_factor = ImLerp(0.40f, 1.0f, ImMax(ta->select, ta->hover * 0.7f));
+                ImColor item_clr = ImColor(alpha_factor, alpha_factor, alpha_factor, window_ease);
+
+                if (icon_font) {
+                    ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, tab.icon.c_str());
+                    ImVec2 ip(t_min.x + 12.f, t_min.y + (tab_h - isz.y) * 0.5f);
+                    dl->AddText(icon_font, icon_font->LegacySize, ip, Draw->GetClr(item_clr), tab.icon.c_str());
+                }
+
+                if (font_regular) {
+                    ImVec2 lsz = font_regular->CalcTextSizeA(font_regular->LegacySize, FLT_MAX, -1.f, tab.label.c_str());
+                    ImVec2 lp(t_min.x + 36.f, t_min.y + (tab_h - lsz.y) * 0.5f);
+                    dl->AddText(font_regular, font_regular->LegacySize, lp, Draw->GetClr(item_clr), tab.label.c_str());
+                }
+
+                ImGui::PopID();
+                side_y += tab_h + 3.f;
+
+                if (!tab.subtabs.empty() && ta->expand > 0.001f) {
+                    const float expand_ease = ta->expand * ta->expand * (3.f - 2.f * ta->expand);
+                    const float sub_h = 24.f;
+                    const float sub_gap = 2.f;
+                    const float total_subtabs_h = static_cast<float>(tab.subtabs.size()) * (sub_h + sub_gap);
+                    const float animated_block_h = total_subtabs_h * expand_ease;
+
+                    ImGui::PushClipRect(ImVec2(pos.x, side_y), ImVec2(pos.x + sidebar_w, side_y + animated_block_h), true);
+
+                    const float tree_x = pos.x + tab_pad_x + 14.f;
+                    const float line_y_start = side_y + sub_h * 0.5f;
+                    const float line_y_end = side_y + (static_cast<float>(tab.subtabs.size()) - 1.f) * (sub_h + sub_gap) + sub_h * 0.5f;
+
+                    if (tab.subtabs.size() > 1)
+                        dl->AddLine(ImVec2(tree_x, line_y_start), ImVec2(tree_x, line_y_end), Draw->GetClr(Colors->divider, 0.25f * expand_ease * window_ease), 1.f);
+
+                    for (size_t s = 0; s < tab.subtabs.size(); ++s) {
+                        CTab* cur_active_tab = FindTabByID(Var->gui.active_tab_id);
+                        const bool is_sub_sel = (cur_active_tab->active_subtab == static_cast<int>(s));
+                        const float sub_item_y = side_y + static_cast<float>(s) * (sub_h + sub_gap);
+                        ImVec2 s_min(pos.x + tab_pad_x, sub_item_y);
+                        ImVec2 s_max(s_min.x + tab_w, s_min.y + sub_h);
+
+                        ImGui::SetCursorScreenPos(s_min);
+                        ImGui::PushID(static_cast<int>(tab.id * 1000 + s + 500));
+                        ImGui::InvisibleButton(xs("##side_sub"), ImVec2(tab_w, sub_h));
+
+                        const bool s_hov = ImGui::IsItemHovered();
+                        if (ImGui::IsItemClicked()) {
+                            Var->gui.active_tab_id = tab.id;
+                            tab.active_subtab = static_cast<int>(s);
+                        }
+
+                        ImGuiID s_anim_id = ImGui::GetID(xs("##sub_anim"));
+                        CSideAnim* sta = this->AnimContainer(&sta, s_anim_id);
+                        sta->hover = ImClamp(sta->hover + this->FixedSpeed(14.f) * ((s_hov && !is_sub_sel) ? 1.f : -1.f), 0.f, 1.f);
+                        sta->select = ImClamp(sta->select + this->FixedSpeed(14.f) * (is_sub_sel ? 1.f : -1.f), 0.f, 1.f);
+
+                        const float sub_dot_y = sub_item_y + sub_h * 0.5f;
+                        const float dot_radius = is_sub_sel ? 2.5f : 1.5f;
+                        const ImColor dot_color = is_sub_sel ? ImColor(Colors->accent.Value) : ImColor(Colors->text_secondary.Value);
+                        dl->AddCircleFilled(ImVec2(tree_x, sub_dot_y), dot_radius, Draw->GetClr(dot_color, (is_sub_sel ? 0.9f : 0.4f) * expand_ease * window_ease), 16);
+
+                        const float sub_alpha = ImLerp(0.35f, 1.0f, ImMax(sta->select, sta->hover * 0.7f)) * expand_ease;
+                        ImColor sub_clr = is_sub_sel ? ImColor(Colors->accent.Value) : ImColor(Colors->text_secondary.Value);
+                        sub_clr.Value.w = sub_alpha * window_ease;
+
+                        if (icon_font) {
+                            ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, tab.subtabs[s].icon.c_str());
+                            ImVec2 ip(tree_x + 10.f, sub_item_y + (sub_h - isz.y) * 0.5f);
+                            dl->AddText(icon_font, icon_font->LegacySize, ip, Draw->GetClr(sub_clr), tab.subtabs[s].icon.c_str());
+                        }
+
+                        if (font_regular) {
+                            ImVec2 lsz = font_regular->CalcTextSizeA(font_regular->LegacySize, FLT_MAX, -1.f, tab.subtabs[s].label.c_str());
+                            ImVec2 lp(tree_x + 30.f, sub_item_y + (sub_h - lsz.y) * 0.5f);
+                            dl->AddText(font_regular, font_regular->LegacySize, lp, Draw->GetClr(sub_clr), tab.subtabs[s].label.c_str());
+                        }
+
+                        ImGui::PopID();
+                    }
+
+                    ImGui::PopClipRect();
+                    side_y += animated_block_h + 4.f * expand_ease;
+                }
             }
+            side_y += 8.f;
         }
 
-        dl->AddLine(ImVec2(pos.x + 14.f, top_sep_y), ImVec2(pos.x + size.x - 14.f, top_sep_y), IM_COL32(36, 37, 38, static_cast<int>(255.f * window_ease)), 1.f);
+        const float bot_sep_y = pos.y + size.y - 62.f;
+        dl->AddLine(ImVec2(pos.x + 14.f, bot_sep_y), ImVec2(pos.x + sidebar_w - 14.f, bot_sep_y), IM_COL32(36, 37, 38, static_cast<int>(255.f * window_ease)), 1.f);
+
+        const float profile_y = bot_sep_y + 12.f;
+        const float av_r = 15.f;
+        const ImVec2 av_center(pos.x + 16.f + av_r, profile_y + av_r);
+
+        dl->AddCircleFilled(av_center, av_r, IM_COL32(38, 40, 44, static_cast<int>(255.f * window_ease)), 32);
+        dl->AddCircle(av_center, av_r, IM_COL32(58, 60, 66, static_cast<int>(255.f * window_ease)), 32, 1.f);
+
+        const float uname_x = av_center.x + av_r + 10.f;
+        dl->AddText(font_regular, font_regular->LegacySize, ImVec2(uname_x, av_center.y - 12.f), Draw->GetClr(Colors->text, window_ease), xs("Guest"));
+        dl->AddText(font_sub, font_sub->LegacySize, ImVec2(uname_x, av_center.y + 2.f), Draw->GetClr(Colors->text_secondary, 0.65f * window_ease), xs("Lifetime"));
+
+        const float dot_btn_sz = 20.f;
+        const ImVec2 dots_min(pos.x + sidebar_w - 16.f - dot_btn_sz, av_center.y - dot_btn_sz * 0.5f);
+
+        ImGui::SetCursorScreenPos(dots_min);
+        ImGui::InvisibleButton(xs("##side_profile_dots"), ImVec2(dot_btn_sz, dot_btn_sz));
+        const bool dots_hover = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked())
+            s_about_open = !s_about_open;
+
+        if (icon_font) {
+            ImVec2 d_sz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, ICON_FA_ELLIPSIS_VERTICAL);
+            ImVec2 dp = dots_min + (ImVec2(dot_btn_sz, dot_btn_sz) - d_sz) * 0.5f;
+            dl->AddText(icon_font, icon_font->LegacySize, dp, Draw->GetClr(dots_hover ? Colors->text : Colors->text_secondary, (dots_hover ? 1.0f : 0.45f) * window_ease), ICON_FA_ELLIPSIS_VERTICAL);
+        }
 
         const float top_btn_sz = 26.f;
-        const float top_btn_y = pos.y + 18.f;
+        const float top_btn_y = pos.y + 20.f;
         float header_cur_x = pos.x + size.x - 24.f;
 
         header_cur_x -= top_btn_sz;
@@ -282,24 +435,6 @@ void CGui::Render() {
         if (cfg_btn_hov)
             this->s_deferred_tooltip = xs("Presets Manager");
 
-        header_cur_x -= (top_btn_sz + 6.f);
-        ImVec2 about_btn_min(header_cur_x, top_btn_y);
-        ImVec2 about_btn_max(about_btn_min.x + top_btn_sz, about_btn_min.y + top_btn_sz);
-
-        ImGui::SetCursorScreenPos(about_btn_min);
-        ImGui::InvisibleButton(xs("##top_about_btn"), ImVec2(top_btn_sz, top_btn_sz));
-        const bool about_btn_hov = ImGui::IsItemHovered();
-        if (ImGui::IsItemClicked())
-            s_about_open = !s_about_open;
-
-        Draw->RectFilled(dl, about_btn_min, about_btn_max, Draw->GetClr(about_btn_hov || s_about_open ? Colors->listbox.hovered : Colors->button.background, window_ease), 6.f);
-        DrawOutline(dl, about_btn_min, about_btn_max, 6.f, window_ease);
-
-        if (icon_font) {
-            ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, ICON_FA_ELLIPSIS_VERTICAL);
-            dl->AddText(icon_font, icon_font->LegacySize, about_btn_min + (ImVec2(top_btn_sz, top_btn_sz) - isz) * 0.5f, Draw->GetClr(about_btn_hov || s_about_open ? Colors->text : Colors->text_secondary, window_ease), ICON_FA_ELLIPSIS_VERTICAL);
-        }
-
         const CTab* cur_active_tab = nullptr;
         for (const auto& cat : Var->gui.categories) {
             for (const auto& tab : cat.tabs) {
@@ -311,18 +446,14 @@ void CGui::Render() {
         }
 
         if (cur_active_tab && !cur_active_tab->subtabs.empty()) {
-            float h_sub_x = pos.x + 16.f;
-            const float h_sub_y = pos.y + 60.f;
+            float h_sub_x = pos.x + sidebar_w + 16.f;
+            const float h_sub_y = pos.y + 24.f;
 
             for (size_t s = 0; s < cur_active_tab->subtabs.size(); ++s) {
                 const auto& sub = cur_active_tab->subtabs[s];
                 CTab* cur_active_tab = FindTabByID(Var->gui.active_tab_id);
-                if (!cur_active_tab)
-                    continue;
                 const bool is_sub_sel = (cur_active_tab->active_subtab == static_cast<int>(s));
 
-                if (!font_bold)
-                    continue;
                 ImVec2 tsz = font_bold->CalcTextSizeA(font_bold->LegacySize, FLT_MAX, -1.f, sub.label.c_str());
                 ImVec2 s_btn_min(h_sub_x, h_sub_y - 4.f);
                 ImVec2 s_btn_max(h_sub_x + tsz.x + 8.f, h_sub_y + tsz.y + 12.f);
@@ -563,8 +694,8 @@ void CGui::Render() {
         if (content_alpha > 0.01f) {
             this->PushStyleVar(ImGuiStyleVar_Alpha, content_alpha);
 
-            ImGui::SetCursorScreenPos(ImVec2(pos.x + 12.f, pos.y + 88.f));
-            ImGui::PushClipRect(ImVec2(pos.x, pos.y + 82.f), ImVec2(pos.x + size.x, pos.y + size.y - 30.f), true);
+            ImGui::SetCursorScreenPos(ImVec2(pos.x + sidebar_w + 4.f, pos.y + 62.f));
+            ImGui::PushClipRect(ImVec2(pos.x + sidebar_w, pos.y + 56.f), ImVec2(pos.x + size.x, pos.y + size.y - 12.f), true);
 
             this->BeginContent();
 
@@ -582,13 +713,6 @@ void CGui::Render() {
             this->EndContent();
             ImGui::PopClipRect();
             this->PopStyleVar();
-        }
-
-        if (font_sub) {
-            const char* brand = xs("customflow");
-            ImVec2 bsz = font_sub->CalcTextSizeA(font_sub->LegacySize, FLT_MAX, -1.f, brand);
-            ImVec2 bp = ImVec2(pos.x + (size.x - bsz.x) * 0.5f, pos.y + size.y - 22.f);
-            dl->AddText(font_sub, font_sub->LegacySize, bp, Draw->GetClr(Colors->text_secondary, 0.35f * window_ease), brand);
         }
 
         ImGui::EndDisabled();
@@ -758,6 +882,8 @@ void CGui::Render() {
 
         this->s_deferred_tooltip.clear();
     }
+
+    // draw_widgets();
 
     ImGui::GetIO().FontGlobalScale = 1.f;
 }

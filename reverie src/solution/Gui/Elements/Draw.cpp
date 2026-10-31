@@ -6,7 +6,6 @@
 #include <imgui/imgui_impl_dx11.h>
 #include <imgui/imgui_impl_win32.h>
 #include <imgui/imgui_freetype.h>
-#include "../Customflow/CustomflowBridge.h"
 
 #include "../Settings/Functions.h"
 #include "../Data/FontsAwesome.h"
@@ -964,9 +963,6 @@ void CDraw::PopClipRect(ImDrawList* draw_list) {
 void CDraw::BeginFrame() {
     this->ReleaseFrameTextures();
 
-    // Customflow: recycle icon textures and apply pending DPI/accent changes.
-    CustomflowBridge::PreFrame();
-
     ImGui_ImplDX11_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
@@ -1076,10 +1072,6 @@ void CDraw::Capture() {
 
     this->InitFonts();
 
-    // Customflow: loads its own fonts into the same atlas, applies its style.
-    // system_dpi=1.0f: Customflow's UI lets the user pick scale at runtime.
-    CustomflowBridge::Init(1.0f);
-
     this->initialized = true;
 }
 
@@ -1090,9 +1082,6 @@ void CDraw::Clear() {
 
     if (!ImGui::GetCurrentContext())
         return;
-
-    // Customflow: release icon textures before backend shuts down.
-    CustomflowBridge::Shutdown();
 
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

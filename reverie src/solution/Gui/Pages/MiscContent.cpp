@@ -13,6 +13,37 @@ void CGui::RenderMiscContent() {
 			this->Checkbox(xs("Leg Movement"), &Config::Get<bool>(Vars::Movement::LegMovement));
 		}
 		this->EndChild();
+
+		this->BeginChild(xs("Display"));
+		{
+			Color_t* watermark_color[1] = { &Config::Get<Color_t>(Vars::Misc::WatermarkAccentColor) };
+			this->CheckboxEx(xs("Watermark"), &Config::Get<bool>(Vars::Misc::Watermark), false, watermark_color, 1, [this]() {
+				this->Checkbox(xs("Show Username"), &Config::Get<bool>(Vars::Misc::WatermarkUsername));
+				this->Checkbox(xs("Show Ping"), &Config::Get<bool>(Vars::Misc::WatermarkPing));
+				this->Checkbox(xs("Show FPS"), &Config::Get<bool>(Vars::Misc::WatermarkFps));
+				this->Checkbox(xs("Show Speed"), &Config::Get<bool>(Vars::Misc::WatermarkSpeed));
+				this->Checkbox(xs("Show Time"), &Config::Get<bool>(Vars::Misc::WatermarkTime));
+				this->SliderInt(xs("Watermark Opacity"), &Config::Get<int>(Vars::Misc::WatermarkOpacity), 0, 255);
+			});
+
+			this->CheckboxEx(xs("Indicators"), &Config::Get<bool>(Vars::Misc::Indicators), false, nullptr, 0, [this]() {
+				this->SliderInt(xs("Indicators Opacity"), &Config::Get<int>(Vars::Misc::IndicatorOpacity), 0, 255);
+			});
+
+			if (Config::Get<bool>(Vars::Misc::Indicators)) {
+				this->MultiDropdown(xs("Indicators List"), &Config::Get<std::vector<int>>(Vars::Misc::IndicatorItems), {
+					xs("Doubletap"),
+					xs("Hideshot"),
+					xs("Bodyaim"),
+					xs("Ping warning"),
+					xs("Hitchance"),
+					xs("Damage"),
+					xs("Bomb"),
+					xs("Peek assist")
+				});
+			}
+		}
+		this->EndChild();
 	}
 	this->EndGroup();
 

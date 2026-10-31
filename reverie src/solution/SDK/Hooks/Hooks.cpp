@@ -1,7 +1,6 @@
 #include <shared.h>
 #include "../../Gui/Blur/Blur.h"
 #include "../../Utils/ThreadPool/ThreadPool.h"
-#include "../../Gui/Customflow/CustomflowBridge.h"
 
 static void(__fastcall* setChannelVerbosity)(int, int) = nullptr;
 static int shootingChannel = -1;
@@ -40,7 +39,11 @@ void __fastcall CreateMove(CCSGOInput* input, int slot, bool active) {
 	Movement->BunnyHop(ctx.cmd);
 	Movement->AirStuck(ctx.cmd);
 	Movement->FastLadder(ctx.cmd);
-	Ragebot->Run(input);
+	__try {
+		Ragebot->Run(input);
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		// swallow to locate crash
+	}
 	Movement->PeekAssist(ctx.cmd);
 
 	Movement->LegMovement(ctx.cmd);
@@ -105,9 +108,7 @@ HRESULT __stdcall Present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT f
 
 	Draw->BeginFrame();
 	{
-		// Customflow menu replaces Gui->Render() entirely.
-		CustomflowBridge::Frame();
-
+		Gui->Render();
 		Visuals->Player.OnPresent();
 		GrenadeTrajectory->OnPresent();
 		GrenadeWarnings->OnPresent();
@@ -123,8 +124,72 @@ HRESULT __stdcall Present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT f
 
 	ImDrawData* draw_data = ImGui::GetDrawData();
 
-	if (draw_data && draw_data->Valid && draw_data->CmdListsCount > 0 && draw_data->TotalVtxCount > 0)
-		Draw->SubmitDrawData(draw_data);
+	if (draw_data && draw_data->Valid && draw_data->CmdListsCount > 0 && draw_data->TotalVtxCount > 0) {
+		if (Gui->about_active && Gui->about_draw_list) {
+			ImVector<ImDrawList*> menu_vector;
+			ImVector<ImDrawList*> about_vector;
+
+			auto is_about_list = [&](ImDrawList* dl) -> bool {
+				if (dl == Gui->about_draw_list)
+					return true;
+
+				for (ImDrawList* extra : Gui->about_extra_draw_lists) {
+					if (dl == extra)
+						return true;
+				}
+
+				return false;
+				};
+
+			for (int i = 0; i < draw_data->CmdListsCount; i++) {
+				if (is_about_list(draw_data->CmdLists[i]))
+					about_vector.push_back(draw_data->CmdLists[i]);
+				else
+					menu_vector.push_back(draw_data->CmdLists[i]);
+			}
+
+			if (menu_vector.Size > 0) {
+				int menu_vtx = 0, menu_idx = 0;
+				for (int i = 0; i < menu_vector.Size; i++) {
+					menu_vtx += menu_vector[i]->VtxBuffer.Size;
+					menu_idx += menu_vector[i]->IdxBuffer.Size;
+				}
+
+				if (menu_vtx > 0) {
+					ImDrawData menu_draw_data = *draw_data;
+					menu_draw_data.CmdLists = menu_vector;
+					menu_draw_data.CmdListsCount = menu_vector.Size;
+					menu_draw_data.TotalVtxCount = menu_vtx;
+					menu_draw_data.TotalIdxCount = menu_idx;
+
+					Draw->SubmitDrawData(&menu_draw_data);
+				}
+			}
+
+			Blur::RenderPostBlur(Device, DeviceCtx, Gui->menu_pos, Gui->menu_pos + Gui->menu_size, Gui->menu_rounding, Gui->ui_alpha * Gui->about_ease);
+
+			if (about_vector.Size > 0) {
+				int about_vtx = 0, about_idx = 0;
+				for (int i = 0; i < about_vector.Size; i++) {
+					about_vtx += about_vector[i]->VtxBuffer.Size;
+					about_idx += about_vector[i]->IdxBuffer.Size;
+				}
+
+				if (about_vtx > 0) {
+					ImDrawData about_draw_data = *draw_data;
+					about_draw_data.CmdLists = about_vector;
+					about_draw_data.CmdListsCount = about_vector.Size;
+					about_draw_data.TotalVtxCount = about_vtx;
+					about_draw_data.TotalIdxCount = about_idx;
+
+					Draw->SubmitDrawData(&about_draw_data);
+				}
+			}
+		}
+		else {
+			Draw->SubmitDrawData(draw_data);
+		}
+	}
 
 	Draw->ReleaseFrameTextures();
 
@@ -1094,22 +1159,20 @@ long Hooks_t::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	Input->OnWndProc(msg, wparam, lparam);
 
 	if (Input->IsKeyReleased(VK_INSERT) || Input->IsKeyReleased(VK_DELETE)) {
-		CustomflowBridge::ToggleVisible();
+		Draw->opened = !Draw->opened;
 
 		static auto rel = GetOriginal(&IsRelativeMouseMode);
-		rel(Inputs, CustomflowBridge::Get().Visible() ? false : Var->winapi.active_mouse_input);
+		rel(Inputs, Draw->opened ? false : Var->winapi.active_mouse_input);
 	}
 
-	const bool menu_open = CustomflowBridge::Get().Visible();
-
-	if (menu_open) {
+	if (Draw->opened) {
 		ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam);
 
 		if ((wparam != 'R' && wparam != '1' && wparam != '2' && wparam != '3' && wparam != '4' && wparam != '5' && wparam != 'W' && wparam != 'A' && wparam != 'S' && wparam != 'D' && wparam != VK_SHIFT && wparam != VK_CONTROL && wparam != VK_TAB && wparam != VK_SPACE) || ImGui::GetIO().WantTextInput)
 			return true;
 	}
 
-	if (menu_open && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE))
+	if (Draw->opened && (msg == WM_LBUTTONDOWN || msg == WM_LBUTTONUP || msg == WM_MOUSEMOVE))
 		return false;
 
 	return static_cast<long>(CallWindowProcW(Input->old_wnd_proc, hwnd, msg, wparam, lparam));

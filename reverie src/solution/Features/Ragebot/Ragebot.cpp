@@ -1,12 +1,29 @@
 #include <shared.h>
 #include "../../SDK/Valve/Interfaces/NetworkClient.h"
 #include <cfloat>
-#include <cmath>
 #include "ScanOrdering.h"
 #include "HitboxPacket.h"
 
+static int64_t NowMs() {
+	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static bool isDataValid(const LagRecord* record) {
+	if (!record) return false;
+
+	const size_t count = record->hitboxes.size();
+
+	if (!count) return false;
+
+	if (record->geometry.size() != count) return false;
+
+	if (record->hitbox_transforms.size() != count) return false;
+
+	return true;
+}
+
 Vector CRagebot::CalculateAngle(const Vector& direction) {
-	return { -std::atan2(direction.z, std::hypot(direction.x, direction.y)) * Math::rads, std::atan2(direction.y, direction.x) * Math::rads, 0.f };
+	return {-std::atan2(direction.z, std::hypot(direction.x, direction.y)) * Math::rads, std::atan2(direction.y, direction.x) * Math::rads, 0.f};
 }
 
 struct RageWeaponGroupVars_t {
@@ -23,8 +40,6 @@ struct RageWeaponGroupVars_t {
 	std::uint32_t MaximumFov;
 	std::uint32_t BodyPointScale;
 	std::uint32_t TargetSelection;
-	std::uint32_t History;
-	std::uint32_t ExtendedBacktrack;
 	std::uint32_t DelayShotEnable;
 	std::uint32_t DelayShot;
 	std::uint32_t RemoveRecoil;
@@ -32,15 +47,18 @@ struct RageWeaponGroupVars_t {
 	std::uint32_t ForceBodyAim;
 	std::uint32_t Hitboxes;
 	std::uint32_t Multipoints;
+	std::uint32_t MaximumDistance;
+	std::uint32_t TicksPerAimpoint;
 };
 
 #define BIND_RAGE_WEAPON_GROUP(grp) { \
 	grp::AutomaticFire, grp::AutomaticScope, grp::AutoStop, grp::PenetrateWalls, \
 	grp::SilentAim, grp::Zeusbot, grp::Knifebot, grp::Hitchance, grp::MinimumDamage, \
 	grp::PointScale, grp::MaximumFov, grp::BodyPointScale, grp::TargetSelection, \
-	grp::History, grp::ExtendedBacktrack, grp::DelayShotEnable, grp::DelayShot, \
-	grp::RemoveRecoil, grp::StrictHitchance, grp::ForceBodyAim, grp::Hitboxes, grp::Multipoints \
-}
+	grp::DelayShotEnable, grp::DelayShot, \
+	grp::RemoveRecoil, grp::StrictHitchance, grp::ForceBodyAim, grp::Hitboxes, grp::Multipoints, \
+	grp::MaximumDistance, grp::TicksPerAimpoint \
+} \
 
 enum e_rage_group : int {
 	group_global = 0,
@@ -90,8 +108,7 @@ weapon_settings_t CRagebot::GetWeaponSettings(int weapon_id) {
 		if (ctx.weapon_data->m_WeaponType() == WEAPONTYPE_PISTOL) {
 			grp = &pistol_grp;
 			group_id = group_pistol;
-		}
-		else {
+		} else {
 			grp = &global_grp;
 			group_id = group_global;
 		}
@@ -112,13 +129,12 @@ weapon_settings_t CRagebot::GetWeaponSettings(int weapon_id) {
 	result.automatic_scope = Config::Get<bool>(grp->AutomaticScope);
 	result.stop_mode = 0;
 	const auto& stop_modes = Config::Get<std::vector<bool>>(grp->AutoStop);
-	for (size_t i = 0; i < std::min(stop_modes.size(), size_t(4)); ++i) {
+	for (auto i{ 0uz }; i < std::min(stop_modes.size(), size_t(4)); ++i) {
 		if (stop_modes[i])
 			result.stop_mode |= 1 << i;
 	}
 	result.silent_aim = Config::Get<bool>(grp->SilentAim);
-	result.history = Config::Get<bool>(grp->History);
-	result.extended_backtrack = Config::Get<bool>(grp->ExtendedBacktrack);
+	// No backtrack: historical records are no longer used.
 	result.remove_recoil = Config::Get<bool>(grp->RemoveRecoil);
 	result.strict_hitchance = Config::Get<bool>(grp->StrictHitchance);
 	result.zeusbot = Config::Get<bool>(Vars::Ragebot::Zeusbot);
@@ -129,72 +145,41 @@ weapon_settings_t CRagebot::GetWeaponSettings(int weapon_id) {
 	result.hitchance = std::clamp(Config::Get<float>(grp->Hitchance), 0.f, 100.f);
 	result.point_scale = std::clamp(Config::Get<float>(grp->PointScale) * 0.01f, 0.f, 1.f);
 	result.body_point_scale = std::clamp(Config::Get<float>(grp->BodyPointScale) * 0.01f, 0.f, 1.f);
-	result.minimum_damage = Config::Get<float>(grp->MinimumDamage);
+	result.minimum_damage = Config::Get<int>(grp->MinimumDamage);
 	result.maximum_fov = std::clamp(Config::Get<float>(grp->MaximumFov), 0.f, 180.f);
+	result.maximum_distance = std::max(Config::Get<float>(grp->MaximumDistance), 0.f);
 	settings_prefix = group_id;
 	return result;
 }
-
 int CRagebot::HitboxGroup(const LagHitbox_t& hitbox) const {
-	static constexpr int groups[] = { -1, 0, 1, 2, 3, 3, 4, 4, 1 };
-
-	if (hitbox.hitgroup < 0 || static_cast<size_t>(hitbox.hitgroup) >= std::size(groups))
+	static constexpr int groups[] = {-1, 0, 1, 2, 3, 3, 4, 4, 1};
+	if (hitbox.hitgroup < 0 || hitbox.hitgroup >= std::size(groups))
 		return -1;
 
-	if (hitbox.foot && (hitbox.hitgroup == 6 || hitbox.hitgroup == 7))
-		return 5;
-
-	return groups[hitbox.hitgroup];
+	return hitbox.foot && (hitbox.hitgroup == 6 || hitbox.hitgroup == 7) ? 5 : groups[hitbox.hitgroup];
 }
 
 float CRagebot::CalcMinDamage(C_CSPlayerPawn* player) const {
-	if (!player)
-		return settings.minimum_damage;
-
-	const float health = static_cast<float>(player->m_iHealth());
-	if (health <= 0.f)
-		return 0.f;
-	if (settings.minimum_damage <= 0.f)
-		return 0.f;
-
-	const float required = std::min(settings.minimum_damage, health);
-	return required;
+	float health = static_cast<float>(player->m_iHealth());
+	return settings.minimum_damage >= 100.f ? health + settings.minimum_damage - 100.f : std::min(settings.minimum_damage, health + 1.f);
 }
 
 float CRagebot::PrepareTargetDamage(C_CSPlayerPawn* player) {
-	if (!player)
-		return 0.f;
-
 	target_damage = AutoWall->PrepareDamage(player);
-
-	static constexpr int groups[] = { -1, 0, 1, 2, 3, 3, 4, 4, 1 };
+	static constexpr int groups[] = {-1, 0, 1, 2, 3, 3, 4, 4, 1};
 	float limit = 0.f;
-	const float bullets = (scan_bullets > 0) ? static_cast<float>(scan_bullets) : 1.f;
-
 	for (int hitgroup = 0; hitgroup < 9; ++hitgroup) {
 		maximum_damage[hitgroup] = AutoWall->DamageUpperBound(target_damage, hitgroup);
-
-		const int group = groups[hitgroup];
-		if (group < 0)
+		int group = groups[hitgroup];
+		if (group < 0 || (!settings.hitboxes[group] && !(group == 4 && settings.hitboxes[5])) || (group == 0 && settings.force_body_aim))
 			continue;
-		const bool group_enabled = settings.hitboxes[group] || (group == 4 && settings.hitboxes[5]);
-		if (!group_enabled)
-			continue;
-		if (group == 0 && settings.force_body_aim)
-			continue;
-
-		limit = std::max(limit, maximum_damage[hitgroup] * bullets);
+		limit = std::max(limit, maximum_damage[hitgroup] * scan_bullets);
 	}
-
 	return limit;
 }
 
 std::span<LagRecord*> CRagebot::SelectRecords(C_CSPlayerPawn* player, bool extrapolate) {
 	selected_records.clear();
-
-	if (!player)
-		return selected_records;
-
 	auto found = LagCompensation->lag_records.find(player->GetHandle().ToInt());
 	if (found == LagCompensation->lag_records.end())
 		return selected_records;
@@ -203,113 +188,68 @@ std::span<LagRecord*> CRagebot::SelectRecords(C_CSPlayerPawn* player, bool extra
 		return selected_records;
 
 	if (extrapolate) {
-		if (auto* record = LagCompensation->GetExtrapolatedRecord(player, processing_tick)) {
+		if (auto record = LagCompensation->GetExtrapolatedRecord(player, processing_tick)) {
 			selected_records.push_back(record);
 			return selected_records;
 		}
 	}
 
 	auto& records = found->second;
-	if (records.empty())
-		return selected_records;
-
-	selected_records.reserve(records.size());
-
-	LagRecord* previous = nullptr;
-	LagRecord* oldest = nullptr;
-
+	// No backtrack: CS2 removed server-side backtrack. Only the newest valid
+	// (and, when enabled, extrapolated) record is allowed to be aimed at.
 	for (size_t i = records.size(); i > 0; --i) {
-		auto* record = &records[i - 1];
-		if (!record)
-			continue;
-
+		auto record = &records[i - 1];
 		if (!LagCompensation->ValidRecord(record, processing_tick))
 			continue;
 
-		bool same_pose = false;
-		if (previous) {
-			if (record->model == previous->model &&
-				record->hitbox_list_context == previous->hitbox_list_context &&
-				record->hitbox_set == previous->hitbox_set) {
-
-				const size_t size = record->hitbox_transforms.size();
-				if (size == previous->hitbox_transforms.size()) {
-					same_pose = (size == 0) ||
-						(std::memcmp(record->hitbox_transforms.data(),
-							previous->hitbox_transforms.data(),
-							size * sizeof(Matrix2x4_t)) == 0);
-				}
-			}
-		}
-
-		if (same_pose && !record->shooting)
-			continue;
-
-		if (!previous || settings.extended_backtrack || record->shooting) {
-			selected_records.push_back(record);
-			previous = record;
-		}
-		else {
-			oldest = record;
-		}
-
-		if (!settings.history)
-			break;
+		selected_records.push_back(record);
+		break;
 	}
-
-	if (!settings.extended_backtrack && oldest)
-		selected_records.push_back(oldest);
 
 	return selected_records;
 }
 
 void CRagebot::SelectPoints(LagRecord* record, std::vector<AimPoint_t>& points, const std::array<ScannedPoint_t, 2>& best, int phase) {
-	if (!record)
-		return;
-
 	cvar(mp_damage_headshot_only);
-	const float minimum_damage = CalcMinDamage(record->player);
-	const bool headshot_only = mp_damage_headshot_only && mp_damage_headshot_only->GetBool();
-
+	bool head_only = mp_damage_headshot_only->GetBool();
+	float minimum_damage = CalcMinDamage(record->player);
 	int record_priority = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
 	record_priority += GlobalVars->tick_count - record->update_tick < 12;
 
-	for (size_t i = 0; i < record->hitboxes.size(); ++i) {
+	for (auto i{ 0uz }; i < record->hitboxes.size(); ++i) {
 		const auto& hitbox = record->hitboxes[i];
-		const int group = HitboxGroup(hitbox);
-		if (group < 0 || !settings.hitboxes[group] ||
-			(group == 0 && settings.force_body_aim) ||
-			(headshot_only && group != 0))
+		int group = HitboxGroup(hitbox);
+		if (group < 0 || !settings.hitboxes[group] || (group == 0 && settings.force_body_aim) || (head_only && group != 0))
 			continue;
 
-		const bool body = hitbox.hitgroup == 2 || hitbox.hitgroup == 3;
-		const int center_phase = body ? 3 : 1;
-		const bool center = phase == center_phase;
+		bool body = hitbox.hitgroup == 2 || hitbox.hitgroup == 3;
+		int center_phase = body ? 3 : 1;
+		bool center = phase == center_phase;
 		if (!center && phase != center_phase - 1)
+			continue;
+
+		float damage = maximum_damage[hitbox.hitgroup] * scan_bullets;
+		if (damage < minimum_damage)
+			continue;
+
+		ScannedPoint_t limit;
+		limit.priority = record_priority + phase;
+		limit.damage = damage;
+		const auto& previous = best[hitbox.hitgroup == 1];
+		if (previous.record && !(limit < previous))
 			continue;
 
 		const auto& geometry = record->geometry[i];
 		if (!geometry.valid)
 			continue;
 
-		const float damage = maximum_damage[hitbox.hitgroup] * scan_bullets;
-
-		ScannedPoint_t limit;
-		limit.priority = record_priority + phase + (group == 0 ? 10 : 0);
-		limit.damage = damage;
-
-		const auto& previous = best[hitbox.hitgroup == 1];
-
-		if (center && previous.record && !(limit < previous))
-			continue;
-
 		if (center) {
-			points.push_back({ geometry.center, static_cast<int>(i), false, false, limit.priority });
+			points.push_back({geometry.center, static_cast<int>(i), false, false, limit.priority});
 			continue;
 		}
 
-		const float scale = group == 0 ? settings.point_scale : settings.body_point_scale;
-		if (scale <= 0.f || !settings.multipoints[group])
+		float scale = group == 0 ? settings.point_scale : settings.body_point_scale;
+		if (!settings.multipoints[group] || scale <= 0.f)
 			continue;
 
 		if (!multipoints_ready)
@@ -326,141 +266,56 @@ void CRagebot::SelectPoints(LagRecord* record, std::vector<AimPoint_t>& points, 
 
 size_t CRagebot::SelectBestPoint(ScannedTarget_t* target, std::vector<ScannedPoint_t>& points) {
 	constexpr size_t invalid = static_cast<size_t>(-1);
+	auto select = [&](bool head) {
+		for (;;) {
+			size_t selected = invalid;
+			for (auto i{ 0uz }; i < points.size(); ++i) {
+				const auto& point = points[i];
+				if (!point.record || point.dont_shoot || (point.hitgroup == 1) != head || !(point.damage >= target->minimum_damage && point.damage > 0.f))
+					continue;
 
-	if (!target)
-		return invalid;
+				if (!(point.hitchance < 0.f || point.hitchance >= required_hitchance))
+					continue;
 
-	// [FIX] Непосчитанный hitchance (< 0) — НЕ проходит.
-	auto valid_point = [](const ScannedPoint_t& p) {
-		return p.record && !p.dont_shoot && p.damage > 0.f;
-		};
-
-	auto meets_min_damage = [&](const ScannedPoint_t& p, bool ignore) {
-		return ignore || (p.damage >= target->minimum_damage && p.damage > 0.f);
-		};
-
-	// [FIX] hitchance < 0 => НЕ проходит.
-	auto meets_hitchance = [&](const ScannedPoint_t& p, float req) {
-		return p.hitchance >= 0.f && p.hitchance >= req;
-		};
-
-	auto is_better = [&](const ScannedPoint_t& candidate, const ScannedPoint_t& current) {
-		if (candidate < current)
-			return true;
-		if (current < candidate)
-			return false;
-		return candidate.multipoint && !current.multipoint;
-		};
-
-	// [FIX] Досчитываем hitchance по требованию.
-	auto ensure_hitchance = [&](size_t idx) {
-		auto& p = points[idx];
-		if (p.hitchance >= 0.f)
-			return;
-		ScannedTarget_t tmp;
-		tmp.player = target->player;
-		tmp.best_point = p;
-		tmp.angle = CalculateAngle(p.point - eye_position);
-		tmp.minimum_damage = target->minimum_damage;
-		p.hitchance = CalcHitchance(&tmp);
-		};
-
-	auto find_point = [&](int hitgroup, bool allow_low_hc = false, bool ignore_min_damage = false) -> size_t {
-		size_t best = invalid;
-		const float req = allow_low_hc ? 0.01f : required_hitchance;
-		for (size_t i = 0; i < points.size(); ++i) {
-			auto& p = points[i];
-			if (!valid_point(p) || p.hitgroup != hitgroup)
-				continue;
-			if (!meets_min_damage(p, ignore_min_damage))
-				continue;
-
-			ensure_hitchance(i);
-
-			if (!meets_hitchance(p, req))
-				continue;
-
-			if (best == invalid || is_better(p, points[best]))
-				best = i;
-		}
-		return best;
-		};
-
-	// 1. Нормальный хитшанс: голова → шея → грудь → живот → любая.
-	size_t selected = find_point(1);
-	if (selected == invalid) selected = find_point(2);
-	if (selected == invalid) selected = find_point(3);
-	if (selected == invalid) selected = find_point(4);
-
-	if (selected == invalid) {
-		for (size_t i = 0; i < points.size(); ++i) {
-			auto& p = points[i];
-			if (!valid_point(p) || !meets_min_damage(p, false))
-				continue;
-			ensure_hitchance(i);
-			if (!meets_hitchance(p, required_hitchance))
-				continue;
-			if (selected == invalid || is_better(p, points[selected]))
-				selected = i;
-		}
-	}
-
-	// 2. Низкий хитшанс: голова → шея.
-	if (selected == invalid) selected = find_point(1, true);
-	if (selected == invalid) selected = find_point(2, true);
-
-	// 3. Тело с игнором Min Damage.
-	if (selected == invalid) selected = find_point(2, true, true);
-	if (selected == invalid) selected = find_point(3, true, true);
-	if (selected == invalid) selected = find_point(4, true, true);
-
-	// 4. Всё остальное с игнором урона.
-	if (selected == invalid) {
-		for (size_t i = 0; i < points.size(); ++i) {
-			auto& p = points[i];
-			if (!p.record || p.dont_shoot || p.damage <= 0.f)
-				continue;
-			ensure_hitchance(i);
-			if (!meets_hitchance(p, 0.01f))
-				continue;
-			if (selected == invalid || is_better(p, points[selected]))
-				selected = i;
-		}
-	}
-
-	// ===== Delay Shot =====
-	if (settings.delay_shot > 0 && selected != invalid) {
-		const int handle = target->player->GetHandle().ToInt();
-		auto it = delayed_ticks.find(handle);
-
-		const bool head_selected = points[selected].hitgroup == 1;
-		if (head_selected) {
-			if (it != delayed_ticks.end())
-				delayed_ticks.erase(it);
-		}
-		else {
-			int& delay = (it != delayed_ticks.end()) ? it->second : delayed_ticks[handle];
-			if (delay < settings.delay_shot) {
-				++delay;
-				size_t body_idx = find_point(2, true, true);
-				if (body_idx == invalid) body_idx = find_point(3, true, true);
-				if (body_idx == invalid) body_idx = find_point(4, true, true);
-				if (body_idx != invalid)
-					selected = body_idx;
+				if (selected == invalid || point < points[selected])
+					selected = i;
 			}
-			else {
-				auto erase_it = (it != delayed_ticks.end()) ? it : delayed_ticks.find(handle);
-				if (erase_it != delayed_ticks.end())
-					delayed_ticks.erase(erase_it);
-			}
+
+			if (selected == invalid || points[selected].hitchance >= required_hitchance)
+				return selected;
+
+			auto& point = points[selected];
+			ScannedTarget_t candidate;
+			candidate.player = target->player;
+			candidate.best_point = point;
+			candidate.angle = CalculateAngle(point.point - eye_position);
+			point.hitchance = CalcHitchance(&candidate);
 		}
-	}
-	else if (!delayed_ticks.empty()) {
+	};
+
+	auto body = select(false);
+	auto head = body == invalid || points[body].damage < target->player->m_iHealth() ? select(true) : invalid;
+	if (settings.delay_shot > 0) {
+		int& delay = delayed_ticks[target->player->GetHandle().ToInt()];
+		if (body != invalid && head != invalid) {
+			if (delay < settings.delay_shot)
+				head = invalid;
+			delay = std::min(delay + 1, settings.delay_shot);
+		} else {
+			delay = 0;
+		}
+	} else if (!delayed_ticks.empty()) {
 		delayed_ticks.erase(target->player->GetHandle().ToInt());
 	}
 
+	size_t selected = body != invalid ? body : head;
+	if (head != invalid) {
+		float body_damage = body != invalid ? points[body].damage : 0.f;
+		if (body_damage < target->player->m_iHealth() && points[head].damage > body_damage && points[head].record->shooting)
+			selected = head;
+	}
+
 	if (selected != invalid) {
-		ensure_hitchance(selected);
 		target->best_point = points[selected];
 		target->angle = CalculateAngle(target->best_point.point - eye_position);
 		target->hitchance = target->best_point.hitchance;
@@ -473,8 +328,8 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 	ScannedTarget_t target;
 	target.player = player;
 	target.minimum_damage = CalcMinDamage(player);
-	target.force_shot = settings.force_shot || PrepareTargetDamage(player) < target.minimum_damage;
-
+	if (PrepareTargetDamage(player) < target.minimum_damage)
+		return target;
 	auto records = SelectRecords(player);
 	if (records.empty())
 		return target;
@@ -483,22 +338,14 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 	auto& debug = point_debug;
 	scanned.clear();
 	debug.clear();
-
-	std::array<ScannedPoint_t, 2> best;
+	std::array<ScannedPoint_t, 2> best{};
 	bool stop_ready = !settings.stop_mode || (stop_target.best_point.record && stop_target.best_point.damage >= stop_target.minimum_damage);
-	const bool needs_scope = settings.automatic_scope && ctx.weapon_data->m_nZoomLevels() > 0 && !ctx.pawn->m_bIsScoped();
-
-	std::array<int, 16> record_priority{};
-	if (records.size() > record_priority.size()) {
-		record_priority.fill(0);
-	}
-	else {
-		for (size_t i = 0; i < records.size(); ++i) {
-			auto* record = records[i];
-			int priority = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
-			priority += GlobalVars->tick_count - record->update_tick < 12;
-			record_priority[i] = priority;
-		}
+	bool needs_scope = settings.automatic_scope && ctx.weapon_data->m_nZoomLevels() > 0 && !ctx.pawn->m_bIsScoped();
+	int maximum_priority = 0;
+	for (auto record : records) {
+		int priority = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
+		priority += GlobalVars->tick_count - record->update_tick < 12;
+		maximum_priority = std::max(maximum_priority, priority + 3);
 	}
 
 	auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
@@ -507,21 +354,14 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 	filter.shape_attr.interacts_exclude |= 0x4000000000;
 	filter.shape_attr.entity_ids_to_ignore[1] = target_filter.shape_attr.entity_ids_to_ignore[0];
 
-	auto get_priority = [&](size_t i) -> int {
-		if (i < record_priority.size() && records.size() <= record_priority.size())
-			return record_priority[i];
-		auto* record = records[i];
-		int p = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
-		p += GlobalVars->tick_count - record->update_tick < 12;
-		return p;
-		};
+	for (auto record : records) {
+		if (!isDataValid(record)) continue;
 
-	for (size_t record_index = 0; record_index < records.size(); ++record_index) {
-		auto* record = records[record_index];
-		const int priority = get_priority(record_index);
-
-		const bool body_done = best[0].record && best[0].priority > priority + 3;
-		const bool head_done = best[1].record && best[1].priority > priority + 1;
+		int priority = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
+		priority += GlobalVars->tick_count - record->update_tick < 12;
+		bool lethal_body = best[0].record && best[0].damage >= player->m_iHealth() && best[0].priority >= maximum_priority;
+		bool body_done = best[0].record && best[0].priority > priority + 3;
+		bool head_done = lethal_body || (best[1].record && best[1].priority > priority + 1);
 		if (body_done && head_done)
 			continue;
 
@@ -538,9 +378,7 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 		results.clear();
 		results.reserve(record->hitboxes.size() + 13);
 		multipoints_ready = false;
-
-		const float trace_range = CalcTraceRange(*record);
-
+		float trace_range = CalcTraceRange(*record);
 		TraceRecord_t* trace_record = nullptr;
 		if (collect_stop_traces) {
 			if (trace_record_count == trace_records.size())
@@ -555,43 +393,23 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 		}
 
 		std::array<bool, 2> spread_limited{};
-
 		auto scan = [&](size_t slot) {
-			const size_t index = scan_indices[slot];
+			size_t index = scan_indices[slot];
 			auto& point = points[index];
 			point.scanned = true;
-
 			Vector direction = point.point - eye_position;
-			const float distance_sq = direction.LengthSqr();
-			if (!direction.Valid() || distance_sq <= 0.f || distance_sq > range_squared)
-				return;
-
-			const float distance = std::sqrt(distance_sq);
-			direction /= distance;
-			if (direction.Dot(view_direction) < fov_cosine)
+			float distance = direction.Normalize();
+			if (distance <= 0.f || distance * distance > range_squared || direction.Dot(view_direction) < fov_cosine)
 				return;
 
 			auto& result = results[index];
 			CAutoWall::Result_t bullet;
 			point.traced = true;
-			const bool hit = AutoWall->Run(eye_position, point.point, player, bullet,
-				settings.penetrate_walls, trace_range, &filter, &target_damage);
-
+			bool hit = AutoWall->Run(eye_position, point.point, player, bullet, settings.penetrate_walls, trace_range, &filter, &target_damage);
 			if (trace_record)
-				trace_record->points[index] = { {point.point.x, point.point.y, point.point.z}, bullet, hit };
+				trace_record->points[index] = {{point.point.x, point.point.y, point.point.z}, bullet, hit};
 
-			if (!hit)
-				return;
-
-			const int expected_group = HitboxGroup(record->hitboxes[point.hitbox]);
-			int got_group = -1;
-			if (bullet.hitgroup >= 0 && bullet.hitgroup < 9) {
-				static constexpr int group_map[] = { -1, 0, 1, 2, 3, 3, 4, 4, 1 };
-				got_group = group_map[bullet.hitgroup];
-			}
-			const bool same_hitbox = bullet.hitgroup == record->hitboxes[point.hitbox].hitgroup;
-			const bool same_group = (got_group >= 0 && got_group == expected_group);
-			if (!same_hitbox && !same_group)
+			if (!hit || bullet.hitgroup != record->hitboxes[point.hitbox].hitgroup)
 				return;
 
 			result.record = record;
@@ -603,32 +421,23 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 			result.penetrated = bullet.penetrated;
 			result.dont_shoot = point.dont_shoot;
 			result.priority = point.priority;
-			result.hitchance = -1.f;
-			};
-
+		};
 		for (int phase = 3; phase >= 0; --phase) {
-			const bool want_head_multipoints = settings.multipoints[0] && settings.point_scale > 0.f;
-			if (phase <= 1 && !want_head_multipoints && !show_points && settings.delay_shot <= 0 &&
-				records.size() == 1 && !record->shooting &&
-				best[0].record && !best[0].dont_shoot && best[1].record)
+			if (phase <= 1 && best[0].record && best[0].damage >= player->m_iHealth() && best[0].priority >= maximum_priority)
+				break;
+			if (phase <= 1 && !show_points && settings.delay_shot <= 0 && records.size() == 1 && !record->shooting && best[0].record && !best[0].dont_shoot)
 				break;
 
-			const size_t first = points.size();
+			size_t first = points.size();
 			SelectPoints(record, points, best, phase);
 			results.resize(points.size());
 			if (trace_record)
 				trace_record->points.resize(points.size());
 
 			size_t probe = first;
-			float probe_damage = first < points.size()
-				? maximum_damage[record->hitboxes[points[first].hitbox].hitgroup]
-				: -1.f;
 			for (size_t i = first + 1; i < points.size(); ++i) {
-				const float dmg = maximum_damage[record->hitboxes[points[i].hitbox].hitgroup];
-				if (dmg > probe_damage) {
-					probe_damage = dmg;
+				if (maximum_damage[record->hitboxes[points[i].hitbox].hitgroup] > maximum_damage[record->hitboxes[points[probe].hitbox].hitgroup])
 					probe = i;
-				}
 			}
 
 			size_t last = first;
@@ -636,51 +445,35 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 			while (last < points.size()) {
 				scan_indices.clear();
 				while (last < points.size() && scan_indices.size() < batch_size) {
-					const size_t index = (last == first) ? probe : (last == probe ? first : last);
+					size_t index = last == first ? probe : (last == probe ? first : last);
 					++last;
 					auto& point = points[index];
-					const int group = record->hitboxes[point.hitbox].hitgroup;
-
+					int group = record->hitboxes[point.hitbox].hitgroup;
 					ScannedPoint_t limit;
 					limit.priority = point.priority;
 					limit.damage = maximum_damage[group] * scan_bullets;
 					const auto& previous = best[group == 1];
-
-					bool scan_point = point.multipoint || !previous.record || limit < previous;
-
+					bool scan_point = !previous.record || limit < previous;
 					if (scan_point && stop_ready && required_hitchance > 0.f && (!needs_scope || target.has_damage)) {
 						Vector direction = point.point - eye_position;
-						const float distance_sq = direction.LengthSqr();
-						if (!direction.Valid() || distance_sq <= 0.f || distance_sq > range_squared) {
+						float distance = direction.Normalize();
+						if (distance <= 0.f || distance * distance > range_squared || direction.Dot(view_direction) < fov_cosine) {
 							point.scanned = true;
 							scan_point = false;
-						}
-						else {
-							const float distance = std::sqrt(distance_sq);
-							direction /= distance;
-							if (direction.Dot(view_direction) < fov_cosine) {
-								point.scanned = true;
+						} else {
+							ScannedTarget_t candidate;
+							candidate.player = player;
+							candidate.best_point.record = record;
+							candidate.best_point.point = point.point;
+							candidate.best_point.hitbox = point.hitbox;
+							candidate.angle = CalculateAngle(point.point - eye_position);
+							auto& result = results[index];
+							if (!CanReachHitchance(&candidate)) {
+								result.hitchance = std::nextafter(required_hitchance, 0.f);
 								scan_point = false;
-							}
-							else {
-								ScannedTarget_t candidate;
-								candidate.player = player;
-								candidate.best_point.record = record;
-								candidate.best_point.point = point.point;
-								candidate.best_point.hitbox = point.hitbox;
-								candidate.best_point.penetrated = false;
-								candidate.angle = CalculateAngle(point.point - eye_position);
-								auto& result = results[index];
-
-								const float local_required = required_hitchance;
-								const float hc = CalcHitchance(&candidate);
-								if (hc < local_required) {
-									result.hitchance = hc;
-								}
-								else if (point.multipoint && spread_limited[group == 1]) {
-									result.hitchance = hc;
-									scan_point = hc >= local_required;
-								}
+							} else if (point.multipoint && spread_limited[group == 1]) {
+								result.hitchance = CalcHitchance(&candidate);
+								scan_point = result.hitchance >= required_hitchance;
 							}
 						}
 					}
@@ -694,12 +487,11 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 
 				RageScan::StableInsertionSort(std::span(scan_indices), [&](size_t left, size_t right) {
 					return results[left] < results[right];
-					});
-
+				});
 				for (size_t index : scan_indices) {
 					auto& result = results[index];
 					auto& previous = best[result.hitgroup == 1];
-					if (!result.record || result.damage <= 0.f)
+					if (!result.record || result.damage < target.minimum_damage)
 						continue;
 
 					if (!result.dont_shoot)
@@ -728,43 +520,29 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 
 		if (trace_record) {
 			size_t count = 0;
-			for (size_t i = 0; i < points.size(); ++i) {
+			for (auto i{ 0uz }; i < points.size(); ++i) {
 				if (points[i].traced)
 					trace_record->points[count++] = trace_record->points[i];
 			}
 			trace_record->points.resize(count);
 			if (count > 1) {
-				std::sort(trace_record->points.data(), trace_record->points.data() + count,
-					[](const TracePoint_t& first, const TracePoint_t& second) {
-						return first.position < second.position;
-					});
+				std::sort(trace_record->points.data(), trace_record->points.data() + count, [](const TracePoint_t& first, const TracePoint_t& second) {
+					return first.position < second.position;
+				});
 			}
 		}
 
-		for (size_t i = 0; i < results.size(); ++i) {
+		for (auto i{ 0uz }; i < results.size(); ++i) {
 			auto& result = results[i];
 			result.debug_index = debug.size();
-			if (show_points) {
-				debug.push_back({
-					points[i].point,
-					result.damage,
-					target.minimum_damage,
-					result.hitchance,
-					result.record != nullptr,
-					false,
-					result.hitchance >= 0.f && result.hitchance < required_hitchance,
-					points[i].scanned,
-					record->m_nSimulationTick
-					});
-			}
+			if (show_points)
+				debug.push_back({points[i].point, result.damage, target.minimum_damage, result.hitchance, result.record != nullptr, false, result.hitchance >= 0.f && result.hitchance < required_hitchance, points[i].scanned, record->m_nSimulationTick});
 
 			if (result.record) {
 				scanned.push_back(result);
-				const bool stop = result.damage >= target.minimum_damage;
-				const bool previous_stop = stop_target.best_point.record && stop_target.best_point.damage >= stop_target.minimum_damage;
-				if (settings.stop_mode && !record->extrapolated_ticks &&
-					(!stop_target.player || (stop && !previous_stop) ||
-						(stop == previous_stop && result.damage > stop_target.best_point.damage))) {
+				bool stop = result.damage >= target.minimum_damage;
+				bool previous_stop = stop_target.best_point.record && stop_target.best_point.damage >= stop_target.minimum_damage;
+				if (settings.stop_mode && !record->extrapolated_ticks && (!stop_target.player || (stop && !previous_stop) || (stop == previous_stop && result.damage > stop_target.best_point.damage))) {
 					stop_target.player = player;
 					stop_target.minimum_damage = target.minimum_damage;
 					stop_target.best_point = result;
@@ -773,10 +551,10 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 		}
 	}
 
-	const size_t selected = SelectBestPoint(&target, scanned);
+	size_t selected = SelectBestPoint(&target, scanned);
 	if (show_points) {
-		const float required = required_hitchance;
-		for (size_t i = 0; i < scanned.size(); ++i) {
+		float required = required_hitchance;
+		for (auto i{ 0uz }; i < scanned.size(); ++i) {
 			auto& point = debug[scanned[i].debug_index];
 			point.hitchance = scanned[i].hitchance;
 			point.hitchance_failed = point.hitchance >= 0.f && point.hitchance < required;
@@ -785,15 +563,13 @@ ScannedTarget_t CRagebot::ScanTarget(C_CSPlayerPawn* player) {
 		if (selected != static_cast<size_t>(-1))
 			debug[scanned[selected].debug_index].selected = true;
 
-		const int tick = target.best_point.record
-			? target.best_point.record->m_nSimulationTick
-			: (debug.empty() ? -1 : debug.front().tick);
-
+		int tick = target.best_point.record ? target.best_point.record->m_nSimulationTick : (debug.empty() ? -1 : debug.front().tick);
 		std::lock_guard lock(debug_mutex);
 		for (const auto& point : debug) {
 			if (point.tick == tick)
 				debug_points.push_back(point);
 		}
+		debug_revision++;
 	}
 
 	return target;
@@ -803,32 +579,28 @@ ScannedTarget_t CRagebot::ScanDamageTarget(C_CSPlayerPawn* player) {
 	ScannedTarget_t target;
 	target.player = player;
 	target.minimum_damage = CalcMinDamage(player);
-	target.force_shot = settings.force_shot || PrepareTargetDamage(player) < target.minimum_damage;
+	if (PrepareTargetDamage(player) < target.minimum_damage)
+		return target;
 
-	for (auto* record : SelectRecords(player, false)) {
+	for (auto record : SelectRecords(player, false)) {
 		CLagRecordScope scope(record, processing_tick);
 		if (scope && ScanRecord(record, &target))
 			break;
 	}
-
 	target.has_damage = target.best_point.record && target.best_point.damage >= target.minimum_damage;
-
-	const bool previous_stop = stop_target.best_point.record && stop_target.best_point.damage >= stop_target.minimum_damage;
-	if (target.best_point.record &&
-		(!stop_target.player ||
-			(target.has_damage && !previous_stop) ||
-			(target.has_damage == previous_stop && target.best_point.damage > stop_target.best_point.damage))) {
+	bool previous_stop = stop_target.best_point.record && stop_target.best_point.damage >= stop_target.minimum_damage;
+	if (target.best_point.record && (!stop_target.player || (target.has_damage && !previous_stop) || (target.has_damage == previous_stop && target.best_point.damage > stop_target.best_point.damage)))
 		stop_target = target;
-	}
-
 	return target;
 }
 
 void CRagebot::ScanTargets(bool full_scan) {
 	show_points = Config::Get<bool>(Vars::Ragebot::ShowAimpoints);
-	{
+	if (show_points) {
 		std::lock_guard lock(debug_mutex);
 		debug_points.clear();
+		debug_stamp_ms = NowMs();
+		debug_revision++;
 	}
 
 	scanned_targets.clear();
@@ -838,7 +610,7 @@ void CRagebot::ScanTargets(bool full_scan) {
 		auto end = targets.begin() + target_count;
 		auto previous = std::find_if(targets.begin(), end, [&](const Target_t& target) {
 			return target.player->GetHandle().ToInt() == last_target_handle;
-			});
+		});
 		if (previous != end)
 			std::rotate(targets.begin(), previous, previous + 1);
 	}
@@ -846,10 +618,10 @@ void CRagebot::ScanTargets(bool full_scan) {
 	if (health_order) {
 		std::stable_sort(targets.begin(), targets.begin() + target_count, [](const Target_t& first, const Target_t& second) {
 			return first.player->m_iHealth() < second.player->m_iHealth();
-			});
+		});
 	}
 
-	for (size_t i = 0; i < target_count; ++i) {
+	for (auto i{ 0uz }; i < target_count; ++i) {
 		auto target = full_scan ? ScanTarget(targets[i].player) : ScanDamageTarget(targets[i].player);
 		bool keep = full_scan && sticky && target.player->GetHandle().ToInt() == last_target_handle && target.best_point.record;
 		scanned_targets.push_back(target);
@@ -864,35 +636,11 @@ ScannedTarget_t* CRagebot::SelectTarget() {
 	auto fov = [&](const Vector& angle) {
 		Vector delta = angle - view;
 		return std::hypot(std::remainder(delta.x, 360.f), std::remainder(delta.y, 360.f));
-		};
-	const float required = required_hitchance;
-
-	ScannedTarget_t* fallback = nullptr;
-	float fallback_score = -1.f;
+	};
+	float required = required_hitchance;
 
 	for (auto& target : scanned_targets) {
-		if (!target.best_point.record || target.best_point.dont_shoot)
-			continue;
-
-		if (target.hitchance < 0.f && target.best_point.damage > 0.f) {
-			ScannedTarget_t tmp = target;
-			target.hitchance = CalcHitchance(&tmp);
-		}
-
-		if (target.best_point.damage > 0.f &&
-			(target.force_shot || target.best_point.damage >= target.minimum_damage) &&
-			target.hitchance >= 0.f && target.hitchance >= required * 0.5f) {
-			const float score = target.best_point.damage * target.hitchance;
-			if (score > fallback_score) {
-				fallback_score = score;
-				fallback = &target;
-			}
-		}
-
-		if (!target.force_shot && target.best_point.damage < target.minimum_damage)
-			continue;
-
-		if (target.hitchance < 0.f || target.hitchance < required)
+		if (!target.best_point.record || target.best_point.dont_shoot || target.best_point.damage < target.minimum_damage || target.hitchance < required)
 			continue;
 
 		if (target.player->GetHandle().ToInt() == last_target_handle && ctx.cmd->command_number - last_target_shot < 256 && settings.target_selection == 0)
@@ -914,20 +662,11 @@ ScannedTarget_t* CRagebot::SelectTarget() {
 				better = target.best_point.damage > best->best_point.damage;
 				break;
 			}
-
-			if (settings.target_selection == 0 && target.best_point.damage == best->best_point.damage) {
-				if (target.best_point.multipoint && !best->best_point.multipoint)
-					better = true;
-			}
 		}
 
 		if (better)
 			best = &target;
 	}
-
-	if (!best && fallback)
-		best = fallback;
-
 	return best;
 }
 
@@ -942,15 +681,18 @@ void CRagebot::Run(CCSGOInput* input) {
 		return;
 	}
 
-	{
+	const bool aimpoints_enabled = Config::Get<bool>(Vars::Ragebot::ShowAimpoints);
+	if (!aimpoints_enabled) {
 		std::lock_guard lock(debug_mutex);
 		debug_points.clear();
+		debug_revision++;
 	}
-
+	
 	int weapon_id = ctx.weapon->m_AttributeManager()->m_Item()->m_iItemDefinitionIndex();
 	settings = GetWeaponSettings(weapon_id);
 
-	show_points = Config::Get<bool>(Vars::Ragebot::ShowAimpoints);
+	show_points = aimpoints_enabled && (ctx.cmd->command_number % Vars::Ragebot::TicksPerAimpoint) == 0;
+
 	required_hitchance = settings.hitchance * 0.01f;
 	bool grounded = (ctx.pawn->m_fFlags() & EnginePrediction->m_fFlags & FL_ONGROUND) != 0;
 	if (!settings.strict_hitchance && weapon_id == WEAPON_SSG08 && !grounded)
@@ -1006,13 +748,8 @@ void CRagebot::Run(CCSGOInput* input) {
 		return;
 
 	scan_bullets = ctx.weapon_data->m_nNumBullets();
-	if (scan_bullets < 1 || scan_bullets > 16)
+	if (scan_bullets < 1 || scan_bullets > 16 || (full_scan && !CalcSpreadValues()))
 		return;
-
-	// [FIX JUMP] Не валим весь ragebot, если spread невалиден — используем консервативный.
-	if (full_scan) {
-		CalcSpreadValues();
-	}
 
 	CAutoWall::Batch_t batch;
 	FindTargets();
@@ -1027,7 +764,7 @@ void CRagebot::Run(CCSGOInput* input) {
 		if (this->CanAutoStop() && (!stop_target.best_point.record || stop_target.best_point.damage < stop_target.minimum_damage)) {
 			std::sort(trace_record_lookup.begin(), trace_record_lookup.end(), [](const auto& first, const auto& second) {
 				return std::less<const LagRecord*>{}(first.first, second.first);
-				});
+			});
 			stop_target = SelectStopTarget();
 		}
 
@@ -1079,18 +816,32 @@ void CRagebot::OnPresent() {
 	if (!Config::Get<bool>(Vars::Ragebot::ShowAimpoints))
 		return;
 
+	if (NowMs() - debug_stamp_ms.load() > 400)
+		return;
+
 	static thread_local std::vector<DebugPoint_t> Points;
-	{
+	static thread_local uint64_t seen_revision = ~0ull;
+	if (seen_revision != debug_revision.load()) {
 		std::lock_guard Lock(debug_mutex);
 		Points.assign(debug_points.begin(), debug_points.end());
+		seen_revision = debug_revision.load();
 	}
+
+	auto* draw_list = ImGui::GetBackgroundDrawList();
+	constexpr size_t maxPoints = 600;
+	size_t drawnPoints = 0;
 
 	const DebugPoint_t* hovered = nullptr;
 	float hover_distance = 36.f;
 	for (const auto& point : Points) {
+		if (drawnPoints >= maxPoints)
+			break;
+
 		auto screen = Draw->WorldToScreen(point.point);
 		if (screen.x < 0.f || screen.y < 0.f)
 			continue;
+		
+		drawnPoints++;
 
 		ImU32 color = IM_COL32(255, 255, 255, 220);
 		if (point.hitchance_failed)
@@ -1134,29 +885,10 @@ void CRagebot::OnPresent() {
 void CRagebot::DoublePrecision() {
 	cvar(sv_late_commands_allowed);
 
-	static bool last_enabled = false;
-	static int last_cvar_value = -2;
-	static std::uint32_t last_check_tick = 0;
-
-	const bool cfg_enabled = Config::Get<bool>(Vars::Ragebot::DoublePrecision);
-	const int cvar_value = sv_late_commands_allowed ? sv_late_commands_allowed->GetInt() : -1;
-
-	const std::uint32_t tick = GlobalVars ? static_cast<std::uint32_t>(GlobalVars->tick_count) : 0;
-	const bool cache_valid = (tick == last_check_tick) && (cfg_enabled == last_enabled) && (cvar_value == last_cvar_value);
-	if (cache_valid)
+	if (!Config::Get<bool>(Vars::Ragebot::DoublePrecision))
 		return;
 
-	last_check_tick = tick;
-	last_enabled = cfg_enabled;
-	last_cvar_value = cvar_value;
-
-	bool enabled = false;
-	if (cfg_enabled && sv_late_commands_allowed) {
-		const int value = sv_late_commands_allowed->GetInt();
-		enabled = (value > 1);
-	}
-
-	precision_enabled.store(enabled, std::memory_order_relaxed);
+	precision_enabled.store((!sv_late_commands_allowed || sv_late_commands_allowed->GetInt() > 1));
 }
 
 float CRagebot::AdjustCommandTime(void* client, int command, double time, float interval, float adjustment) const {
@@ -1236,35 +968,18 @@ void CRagebot::Reset() {
 }
 
 float CRagebot::CalcTraceRange(const LagRecord& record) const {
-	const float range = ctx.weapon_data->m_flRange();
-
+	float range = ctx.weapon_data->m_flRange();
 	if (record.geometry.empty())
 		return range;
 
 	float distance = 0.f;
-	bool any_valid = false;
-
 	for (const auto& hitbox : record.geometry) {
 		if (!hitbox.valid)
-			continue;
+			return range;
 
-		any_valid = true;
-
-		if (hitbox.bound_radius_squared < 0.f)
-			continue;
-
-		const float center_distance = (hitbox.center - eye_position).Length();
-		const float radius = std::sqrt(hitbox.bound_radius_squared);
-
-		distance = std::max(distance, center_distance + radius + 1.f);
+		distance = std::max(distance, (hitbox.center - eye_position).Length() + std::sqrt(hitbox.bound_radius_squared) + 1.f);
 	}
-
-	if (!any_valid || distance <= 0.f)
-		return range;
-
-	const float padded = distance * 1.05f + 8.f;
-
-	return std::min(range, padded);
+	return std::min(range, distance);
 }
 
 void CRagebot::PrepareScan(LagRecord* record) {
@@ -1274,7 +989,7 @@ void CRagebot::PrepareScan(LagRecord* record) {
 	scan_range = CalcTraceRange(*record);
 	scan_hitboxes.reserve(record->hitboxes.size());
 	float eye_magnitude = std::fabs(eye_position.x) + std::fabs(eye_position.y) + std::fabs(eye_position.z);
-	for (size_t i = 0; i < record->hitboxes.size(); ++i) {
+	for (auto i{ 0uz }; i < record->hitboxes.size(); ++i) {
 		const auto& data = record->hitboxes[i];
 		int group = HitboxGroup(data);
 		if (group < 0 || !settings.hitboxes[group] || (group == 0 && settings.force_body_aim) || (mp_damage_headshot_only->GetBool() && group != 0))
@@ -1320,7 +1035,7 @@ void CRagebot::PrepareScan(LagRecord* record) {
 
 	std::sort(scan_hitboxes.begin(), scan_hitboxes.end(), [](const ScanHitbox_t& first, const ScanHitbox_t& second) {
 		return first.group != second.group ? first.group < second.group : first.index < second.index;
-		});
+	});
 }
 
 float CRagebot::HitboxDamageLimit(const ScanHitbox_t& source) const {
@@ -1357,7 +1072,7 @@ float CRagebot::PointDamageLimit(const Vector& direction, float range) const {
 }
 
 void CRagebot::AddMultipoint(AimPoints_t& points, const Vector& point, int hitbox) const {
-	if (points.count >= points.points.size())
+	if (points.count == points.points.size())
 		return;
 
 	Vector direction = point - eye_position;
@@ -1365,11 +1080,17 @@ void CRagebot::AddMultipoint(AimPoints_t& points, const Vector& point, int hitbo
 	if (!direction.Valid() || length_squared <= 0.f)
 		return;
 
-	for (size_t i = 0; i < points.count; ++i) {
-		if ((point - points.points[i].point).LengthSqr() <= 1e-6f)
+	for (auto i{ 0uz }; i < points.count; ++i) {
+		Vector previous = points.points[i].point - eye_position;
+		double cross_x = static_cast<double>(direction.y) * previous.z - static_cast<double>(direction.z) * previous.y;
+		double cross_y = static_cast<double>(direction.z) * previous.x - static_cast<double>(direction.x) * previous.z;
+		double cross_z = static_cast<double>(direction.x) * previous.y - static_cast<double>(direction.y) * previous.x;
+		double cross_squared = cross_x * cross_x + cross_y * cross_y + cross_z * cross_z;
+
+		if ((point - points.points[i].point).LengthSqr() <= 0.00000001f || (RageHitbox_t::Dot(direction, previous) > 0.f && cross_squared <= static_cast<double>(length_squared) * previous.LengthSqr() * 1e-16))
 			return;
 	}
-	points.points[points.count++] = { point, hitbox, true };
+	points.points[points.count++] = {point, hitbox, true};
 }
 
 void CRagebot::PrepareMultipoints(LagRecord* record) {
@@ -1388,22 +1109,26 @@ void CRagebot::PrepareMultipoints(LagRecord* record) {
 
 	Vector up = right.Cross(view).Normalized();
 	std::array<std::array<AimPoint_t, 3>, 6> edges;
+	for (auto& group : edges) {
+		for (auto& point : group) {
+			point.hitbox = -1;
+		}
+	}
+
 	float scores[6][3];
 	for (auto& group : scores)
 		std::fill(std::begin(group), std::end(group), -FLT_MAX);
 
 	cvar(mp_damage_headshot_only);
-	bool headshot_only = mp_damage_headshot_only && mp_damage_headshot_only->GetBool();
-
-	for (size_t i = 0; i < record->hitboxes.size(); ++i) {
+	for (auto i{ 0uz }; i < record->hitboxes.size(); ++i) {
 		const auto& data = record->hitboxes[i];
 		const auto& geometry = record->geometry[i];
 		int group = HitboxGroup(data);
-		if (!geometry.valid || group < 0 || !settings.hitboxes[group] || (group == 0 && settings.force_body_aim) || (headshot_only && group != 0))
+		if (!geometry.valid || group < 0 || !settings.hitboxes[group] || (group == 0 && settings.force_body_aim) || (mp_damage_headshot_only->GetBool() && group != 0))
 			continue;
 
 		auto& points = multipoint_points[i];
-		points.points[points.count++] = { geometry.center, static_cast<int>(i) };
+		points.points[points.count++] = {geometry.center, static_cast<int>(i)};
 		if (!settings.multipoints[group])
 			continue;
 
@@ -1412,8 +1137,7 @@ void CRagebot::PrepareMultipoints(LagRecord* record) {
 		hitbox.group = group;
 		hitbox.center = geometry.center;
 		hitbox.direction = geometry.center - eye_position;
-		if (hitbox.direction.Normalize() <= 0.0001f)
-			continue;
+		hitbox.direction.Normalize();
 		hitbox.matrix = record->hitbox_transforms[i].ToMatrix3x4();
 
 		AimPoints_t candidates = points;
@@ -1427,7 +1151,7 @@ void CRagebot::PrepareMultipoints(LagRecord* record) {
 
 			float side = RageHitbox_t::Dot(direction, right) / depth;
 			float height = RageHitbox_t::Dot(direction, up) / depth;
-			const float values[] = { side, -side, height };
+			const float values[] = {side, -side, height};
 			for (int edge = 0; edge < (group == 0 ? 3 : 2); ++edge) {
 				if (values[edge] <= scores[group][edge])
 					continue;
@@ -1467,9 +1191,8 @@ void CRagebot::GetMultipoints(LagRecord* record, const ScanHitbox_t& hitbox, Aim
 		right = view.Cross(Vector(1.f, 0.f, 0.f)).Normalized();
 
 	Vector up = right.Cross(view).Normalized();
-	const Vector directions[] = { right, right * -1.f, up };
-	int count = (hitbox.group == 0 ? 3 : 2);
-	for (int i = 0; i < count; ++i) {
+	const Vector directions[] = {right, right * -1.f, up};
+	for (int i = 0; i < (hitbox.group == 0 ? 3 : 2); ++i) {
 		Vector point = geometry.center + (geometry.Contour(eye_position, view, directions[i]) - geometry.center) * scale;
 		AddMultipoint(points, point, hitbox.index);
 	}
@@ -1477,8 +1200,14 @@ void CRagebot::GetMultipoints(LagRecord* record, const ScanHitbox_t& hitbox, Aim
 
 void CRagebot::FindTargets() {
 	target_count = 0;
-	for (size_t i = 0; i < EntityList->player_count && target_count < targets.size(); ++i) {
+
+	static constexpr float cull_margin = 48.f;
+	const float cull_distance = settings.maximum_distance + cull_margin;
+	const float cull_squared = cull_distance * cull_distance;
+
+	for (auto i{ 0uz }; i < EntityList->player_count && target_count < targets.size(); i++) {
 		auto& entity = EntityList->players[i];
+
 		if (!entity.Fill())
 			continue;
 
@@ -1490,102 +1219,38 @@ void CRagebot::FindTargets() {
 		if (!node || player == ctx.pawn || !player->Alive() || !player->Enemy(ctx.pawn) || player->m_bGunGameImmunity())
 			continue;
 
-		bool duplicate = false;
-		for (size_t k = 0; k < target_count; ++k) {
-			if (targets[k].player == player) {
-				duplicate = true;
-				break;
-			}
+		const Vector origin = node->m_vecAbsOrigin();
+		if (settings.maximum_distance > 0.f) {
+			Vector center = origin;
+			center.z += 36.f; // roughly mid-body, so feet-vs-eye height doesn't skew the check
+			if ((center - eye_position).LengthSqr() > cull_squared)
+				continue;
 		}
-		if (duplicate)
+
+		if (std::any_of(targets.begin(), targets.begin() + target_count, [&](const Target_t& target) { return target.player == player; }))
 			continue;
 
-		targets[target_count++] = { player, (node->m_vecAbsOrigin() - eye_position).LengthSqr() };
+		targets[target_count++] = { player, (origin - eye_position).LengthSqr() };
 	}
 
 	std::sort(targets.begin(), targets.begin() + target_count, [](const Target_t& first, const Target_t& second) {
 		return first.distance_squared < second.distance_squared;
-		});
+	});
 }
 
 bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
-	if (!record || !target)
-		return false;
-
-	if (record->hitboxes.empty() || record->hitboxes.size() != record->hitbox_transforms.size())
+	if (!record || record->hitboxes.empty() || record->hitboxes.size() != record->hitbox_transforms.size())
 		return false;
 
 	if (target->best_point.record && target->best_point.damage >= target->minimum_damage)
 		return true;
 
 	PrepareScan(record);
-	if (!target->force_shot && scan_damage_limit < target->minimum_damage)
+	if (scan_damage_limit < target->minimum_damage)
 		return false;
-
-	auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
-	auto target_filter = Physics->MakeFilter(target->player, 0x1C300B, 3, 15);
-	filter.shape_attr.flags |= 2;
-	filter.shape_attr.interacts_exclude |= 0x4000000000;
-	filter.shape_attr.entity_ids_to_ignore[1] = target_filter.shape_attr.entity_ids_to_ignore[0];
 
 	auto& points = scan_points;
 	auto& results = scan_results;
-
-	const TraceRecord_t* cached = nullptr;
-	{
-		auto cached_record = std::lower_bound(trace_record_lookup.begin(), trace_record_lookup.end(), record,
-			[](const auto& entry, const LagRecord* value) {
-				return std::less<const LagRecord*>{}(entry.first, value);
-			});
-		if (cached_record != trace_record_lookup.end() && cached_record->first == record) {
-			const auto& tr = trace_records[cached_record->second];
-			if (tr.range == scan_range && (tr.source - eye_position).Zero())
-				cached = &tr;
-		}
-	}
-
-	auto read_result = [&](size_t index, const CAutoWall::Result_t& bullet, bool hit) -> void {
-		if (!hit)
-			return;
-
-		const auto& point = points[index];
-
-		int expected_group = HitboxGroup(record->hitboxes[point.hitbox]);
-		int got_group = -1;
-		if (bullet.hitgroup >= 0 && bullet.hitgroup < 9) {
-			static constexpr int group_map[] = { -1, 0, 1, 2, 3, 3, 4, 4, 1 };
-			got_group = group_map[bullet.hitgroup];
-		}
-		const bool same_hitbox = bullet.hitgroup == record->hitboxes[point.hitbox].hitgroup;
-		const bool same_group = (got_group >= 0 && got_group == expected_group);
-		if (!same_hitbox && !same_group)
-			return;
-
-		int hitbox = point.hitbox;
-		if (record->hitboxes[hitbox].descriptor != bullet.hitbox_data) {
-			auto found = std::find_if(record->hitboxes.begin(), record->hitboxes.end(), [&](const LagHitbox_t& data) {
-				return data.descriptor == bullet.hitbox_data;
-				});
-			if (found == record->hitboxes.end())
-				return;
-			hitbox = static_cast<int>(found - record->hitboxes.begin());
-		}
-
-		int group = HitboxGroup(record->hitboxes[hitbox]);
-		if (group < 0 || !settings.hitboxes[group])
-			return;
-
-		auto& result = results[index];
-		result.record = record;
-		result.point = point.point;
-		result.hitbox = hitbox;
-		result.multipoint = point.multipoint;
-		result.damage = bullet.damage * scan_bullets;
-		result.hitgroup = bullet.hitgroup;
-		result.penetrated = bullet.penetrated;
-		result.hitchance = -1.f;
-		};
-
 	for (int phase = 0; phase < 2; ++phase) {
 		if (phase)
 			PrepareMultipoints(record);
@@ -1597,12 +1262,12 @@ bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
 			if (!record->geometry[hitbox.index].valid)
 				continue;
 			float hitbox_limit = HitboxDamageLimit(hitbox);
-			if (hitbox_limit <= (target->force_shot ? 0.f : target->minimum_damage) || hitbox_limit <= target->best_point.damage)
+			if (hitbox_limit < target->minimum_damage || hitbox_limit <= target->best_point.damage)
 				continue;
 
 			AimPoints_t center;
 			center.count = 1;
-			center.points[0] = { record->geometry[hitbox.index].center, hitbox.index };
+			center.points[0] = {record->geometry[hitbox.index].center, hitbox.index};
 			const auto& generated = phase ? multipoint_points[hitbox.index] : center;
 
 			for (size_t i = phase ? 1 : 0; i < generated.count; ++i) {
@@ -1612,14 +1277,12 @@ bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
 				if (!direction.Valid() || distance_squared <= 0.f || distance_squared > range_squared)
 					continue;
 
-				const float distance = std::sqrt(distance_squared);
-				direction /= distance;
-
+				direction /= std::sqrt(distance_squared);
 				if (settings.maximum_fov < 180.f && direction.Dot(view_direction) < fov_cosine)
 					continue;
 
 				float damage_limit = PointDamageLimit(direction, ctx.weapon_data->m_flRange());
-				if (damage_limit <= (target->force_shot ? 0.f : target->minimum_damage) || damage_limit <= target->best_point.damage)
+				if (damage_limit < target->minimum_damage || damage_limit <= target->best_point.damage)
 					continue;
 
 				points.push_back(point);
@@ -1627,35 +1290,72 @@ bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
 		}
 		results.resize(points.size());
 
-		for (size_t i = 0; i < points.size(); ++i) {
+		auto read_result = [&](size_t index, const CAutoWall::Result_t& bullet, bool hit) {
+			const auto& point = points[index];
+			if (!hit || bullet.hitgroup != record->hitboxes[point.hitbox].hitgroup)
+				return;
+
+			int hitbox = point.hitbox;
+			if (record->hitboxes[hitbox].descriptor != bullet.hitbox_data) {
+				auto found = std::find_if(record->hitboxes.begin(), record->hitboxes.end(), [&](const LagHitbox_t& data) {
+					return data.descriptor == bullet.hitbox_data;
+				});
+				if (found == record->hitboxes.end())
+					return;
+
+				hitbox = static_cast<int>(found - record->hitboxes.begin());
+			}
+
+			int group = HitboxGroup(record->hitboxes[hitbox]);
+			if (group < 0 || !settings.hitboxes[group])
+				return;
+
+			auto& result = results[index];
+			result.record = record;
+			result.point = point.point;
+			result.hitbox = hitbox;
+			result.multipoint = point.multipoint;
+			result.damage = bullet.damage * scan_bullets;
+			result.hitgroup = bullet.hitgroup;
+			result.penetrated = bullet.penetrated;
+		};
+
+		const TraceRecord_t* cached = nullptr;
+		auto cached_record = std::lower_bound(trace_record_lookup.begin(), trace_record_lookup.end(), record, [](const auto& entry, const LagRecord* value) {
+			return std::less<const LagRecord*>{}(entry.first, value);
+		});
+		if (cached_record != trace_record_lookup.end() && cached_record->first == record && trace_records[cached_record->second].range == scan_range &&
+			(trace_records[cached_record->second].source - eye_position).Zero())
+			cached = &trace_records[cached_record->second];
+
+		for (auto i{ 0uz }; i < points.size(); ++i) {
 			if (cached && !cached->points.empty()) {
-				std::array<float, 3> position = { points[i].point.x, points[i].point.y, points[i].point.z };
+				std::array<float, 3> position = {points[i].point.x, points[i].point.y, points[i].point.z};
 				const auto end = cached->points.data() + cached->points.size();
 				auto found = std::lower_bound(cached->points.data(), end, position, [](const TracePoint_t& point, const std::array<float, 3>& value) {
 					return point.position < value;
-					});
+				});
 				if (found != end && found->position == position) {
 					read_result(i, found->result, found->hit);
 					if (results[i].record && results[i].damage >= target->minimum_damage) {
 						target->best_point = results[i];
-						if (target->best_point.hitchance < 0.f) {
-							ScannedTarget_t tmp;
-							tmp.player = target->player;
-							tmp.best_point = target->best_point;
-							tmp.angle = CalculateAngle(target->best_point.point - eye_position);
-							tmp.minimum_damage = target->minimum_damage;
-							target->best_point.hitchance = CalcHitchance(&tmp);
-						}
-						target->hitchance = target->best_point.hitchance;
 						return true;
 					}
+
 					continue;
 				}
 			}
+
 			scan_indices.push_back(i);
 		}
 
 		if (!scan_indices.empty()) {
+			auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
+			auto target_filter = Physics->MakeFilter(target->player, 0x1C300B, 3, 15);
+			filter.shape_attr.flags |= 2;
+			filter.shape_attr.interacts_exclude |= 0x4000000000;
+			filter.shape_attr.entity_ids_to_ignore[1] = target_filter.shape_attr.entity_ids_to_ignore[0];
+
 			bool found_point = false;
 			auto scan = [&](size_t slot) {
 				if (found_point)
@@ -1667,7 +1367,7 @@ bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
 				read_result(index, bullet, hit);
 				if (results[index].record && results[index].damage >= target->minimum_damage)
 					found_point = true;
-				};
+			};
 
 			scan(0);
 			for (size_t slot = 1; slot < scan_indices.size() && !found_point; ++slot)
@@ -1677,22 +1377,11 @@ bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
 		for (const auto& result : results) {
 			if (!result.record || result.damage <= target->best_point.damage)
 				continue;
+
 			target->best_point = result;
-			if (target->best_point.hitchance < 0.f) {
-				ScannedTarget_t tmp;
-				tmp.player = target->player;
-				tmp.best_point = target->best_point;
-				tmp.angle = CalculateAngle(target->best_point.point - eye_position);
-				tmp.minimum_damage = target->minimum_damage;
-				target->best_point.hitchance = CalcHitchance(&tmp);
-			}
-			target->hitchance = target->best_point.hitchance;
 			if (result.damage >= target->minimum_damage)
 				return true;
 		}
-
-		if (phase == 1 && !target->best_point.record)
-			break;
 	}
 	return false;
 }
@@ -1701,7 +1390,8 @@ ScannedTarget_t CRagebot::ScanStopTarget(C_CSPlayerPawn* player, bool history) {
 	ScannedTarget_t target;
 	target.player = player;
 	target.minimum_damage = CalcMinDamage(player);
-	target.force_shot = settings.force_shot || PrepareTargetDamage(player) < target.minimum_damage;
+	if (PrepareTargetDamage(player) < target.minimum_damage)
+		return target;
 
 	bool newest = true;
 	for (auto record : SelectRecords(player, false)) {
@@ -1709,8 +1399,7 @@ ScannedTarget_t CRagebot::ScanStopTarget(C_CSPlayerPawn* player, bool history) {
 			newest = false;
 			if (history)
 				continue;
-		}
-		else if (!history) {
+		} else if (!history) {
 			break;
 		}
 
@@ -1726,8 +1415,8 @@ ScannedTarget_t CRagebot::ScanStopTarget(C_CSPlayerPawn* player, bool history) {
 
 ScannedTarget_t CRagebot::SelectStopTarget() {
 	ScannedTarget_t best;
-	for (bool history : {false, true}) {
-		for (size_t i = 0; i < target_count; ++i) {
+	for (bool history : {false}) {
+		for (auto i{ 0uz }; i < target_count; ++i) {
 			auto target = ScanStopTarget(targets[i].player, history);
 			if (target.best_point.damage >= target.minimum_damage)
 				return target;
@@ -1746,7 +1435,7 @@ void CRagebot::RestoreAutoStop(CUserCommand* cmd) {
 	auto base = cmd->pb.mutable_base();
 	base->set_forwardmove(this->stop_input.x);
 	base->set_leftmove(this->stop_input.y);
-	for (size_t i = 0; i < this->stop_subtick_input.size() && i < base->subtick_moves_size(); ++i) {
+	for (auto i{ 0uz }; i < this->stop_subtick_input.size() && i < base->subtick_moves_size(); ++i) {
 		auto step = base->mutable_subtick_moves(static_cast<int>(i));
 		step->set_analog_forward_delta(this->stop_subtick_input[i].x);
 		step->set_analog_left_delta(this->stop_subtick_input[i].y);
@@ -1817,7 +1506,7 @@ void CRagebot::PrepareAutoStop() {
 	this->FindTargets();
 
 	CAutoWall::Batch_t batch;
-	for (size_t i = 0; i < this->target_count; ++i) {
+	for (auto i{ 0uz }; i < this->target_count; ++i) {
 		auto target = this->ScanStopTarget(this->targets[i].player);
 		if (this->AutoStop(&target, true))
 			return;
@@ -1873,7 +1562,7 @@ bool CRagebot::ApplyAutoStop(int tick_offset) {
 	}
 
 	int command = ctx.cmd->command_number;
-	if (stop_command < 0 || command < stop_command || command - stop_command >(tick_offset ? 1 : 0) || ctx.weapon->GetHandle().ToInt() != stop_weapon) {
+	if (stop_command < 0 || command < stop_command || command - stop_command > (tick_offset ? 1 : 0) || ctx.weapon->GetHandle().ToInt() != stop_weapon) {
 		stop_command = -1;
 		last_early_stop = -1;
 		return false;
@@ -1972,23 +1661,9 @@ bool CRagebot::CalcSpreadValues() {
 	if (!EnginePrediction->WeaponAccuracyValid() || EnginePrediction->WeaponAccuracyCommand() != ctx.cmd->command_number)
 		return false;
 
-	static auto random_seed = reinterpret_cast<CUniformRandomStreamState::Constructor_t>(
-		GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()),
-			xs("??0?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAA@H@Z")));
-	static auto random_float = reinterpret_cast<CUniformRandomStreamState::RandomFloat_t>(
-		GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()),
-			xs("?RandomFloat@?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAAMMM@Z")));
-
-	static const bool symbols_ok = (random_seed != nullptr && random_float != nullptr);
-	if (!symbols_ok)
-		return false;
-
-	return spread_cache.Update(
-		EnginePrediction->WeaponInaccuracy(),
-		EnginePrediction->WeaponSpread(),
-		ctx.weapon_data->m_bIsRevolver(),
-		random_seed,
-		random_float);
+	static auto random_seed = reinterpret_cast<CUniformRandomStreamState::Constructor_t>(GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()), xs("??0?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAA@H@Z")));
+	static auto random_float = reinterpret_cast<CUniformRandomStreamState::RandomFloat_t>(GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()), xs("?RandomFloat@?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAAMMM@Z")));
+	return random_seed && random_float && spread_cache.Update(EnginePrediction->WeaponInaccuracy(), EnginePrediction->WeaponSpread(), ctx.weapon_data->m_bIsRevolver(), random_seed, random_float);
 }
 
 void CRagebot::PrepareHitchance(const LagRecord& record) {
@@ -1997,7 +1672,7 @@ void CRagebot::PrepareHitchance(const LagRecord& record) {
 
 	hitchance_rays.resize(record.geometry.size());
 	double maximum_spread = std::sqrt(spread_cache.SortedRadiusSquared.back());
-	for (size_t i = 0; i < record.geometry.size(); ++i) {
+	for (auto i{ 0uz }; i < record.geometry.size(); ++i) {
 		const auto& hitbox = record.geometry[i];
 		if (hitbox.valid)
 			hitbox.PrepareRay(eye_position, hitchance_rays[i], maximum_spread);
@@ -2006,46 +1681,51 @@ void CRagebot::PrepareHitchance(const LagRecord& record) {
 	hitchance_eye = eye_position;
 }
 
-
 CHitchanceCache::Key CRagebot::HitchanceKey(const ScannedTarget_t* target, int desired) const {
-	auto q = [](float v, float step) {
-		return std::round(v / step) * step;
-		};
-	return CHitchanceCache::Key::Make(
-		target->best_point.record->revision,
-		spread_cache.Revision(),
-		{ q(eye_position.x, 0.5f), q(eye_position.y, 0.5f), q(eye_position.z, 0.5f) },
-		{ q(target->angle.x, 0.05f), q(target->angle.y, 0.05f), q(target->angle.z, 0.05f) },
-		required_hitchance,
-		desired,
-		ctx.weapon_data->m_flRange());
+	return CHitchanceCache::Key::Make(target->best_point.record->revision, spread_cache.Revision(),
+		{eye_position.x, eye_position.y, eye_position.z}, {target->angle.x, target->angle.y, target->angle.z}, required_hitchance, desired, ctx.weapon_data->m_flRange());
 }
 
 bool CRagebot::CanReachHitchance(const ScannedTarget_t* target) {
-	if (!target || required_hitchance <= 0.f)
-		return true;
-	return CalcHitchance(target) >= required_hitchance;
-}
-
-float CRagebot::CalcHitchance(const ScannedTarget_t* target) {
-	if (!target || required_hitchance <= 0.f)
-		return 1.f;
-
 	const auto& record = *target->best_point.record;
 	const auto& selected = record.hitboxes[target->best_point.hitbox];
+	if (required_hitchance <= 0.f)
+		return true;
 
 	int desired = HitboxGroup(selected);
 	if (desired == 5)
 		desired = 4;
-	if (desired < 0)
-		return 0.f;
-
-	const auto key = HitchanceKey(target, desired);
+	auto key = HitchanceKey(target, desired);
 	float cached = 0.f;
-	if (record.revision && hitchance_cache.Find(key, cached))
-		return cached;
+	if (record.revision && hitchance_cache.Find(key, cached)) {
+		return cached >= required_hitchance;
+	}
+	PrepareHitchance(record);
+	Vector forward, right, up;
+	Math::Angle2Vectors(target->angle, &forward, &right, &up);
+	bool reachable = RageHitbox_t::CanReachHitchance(record.geometry, hitchance_rays, spread_cache.SortedRadiusSquared, forward, right, up, desired, required_hitchance);
+	if (!reachable) {
+		if (record.revision)
+			hitchance_cache.Store(key, std::nextafter(required_hitchance, 0.f));
+	}
+	return reachable;
+}
 
-	const float result = CalcHitchanceUncached(target, desired);
+float CRagebot::CalcHitchance(const ScannedTarget_t* target) {
+	if (required_hitchance <= 0.f)
+		return 1.f;
+
+	const auto& record = *target->best_point.record;
+	const auto& selected = record.hitboxes[target->best_point.hitbox];
+	int desired = HitboxGroup(selected);
+	if (desired == 5)
+		desired = 4;
+	auto key = HitchanceKey(target, desired);
+	float cached = 0.f;
+	if (record.revision && hitchance_cache.Find(key, cached)) {
+		return cached;
+	}
+	float result = CalcHitchanceUncached(target, desired);
 	if (record.revision)
 		hitchance_cache.Store(key, result);
 	return result;
@@ -2054,84 +1734,48 @@ float CRagebot::CalcHitchance(const ScannedTarget_t* target) {
 float CRagebot::CalcHitchanceUncached(const ScannedTarget_t* target, int desired) {
 	const auto& record = *target->best_point.record;
 	PrepareHitchance(record);
-
-	if (hitchance_rays.size() != record.geometry.size())
-		return 0.f;
-
 	Vector forward, right, up;
 	Math::Angle2Vectors(target->angle, &forward, &right, &up);
+	if (!RageHitbox_t::CanReachHitchance(record.geometry, hitchance_rays, spread_cache.SortedRadiusSquared, forward, right, up, desired, required_hitchance)) {
+		return std::nextafter(required_hitchance, 0.f);
+	}
 
 	const auto& hitboxes = record.geometry;
 	const auto& offsets = spread_cache.offsets;
 	const Vector& eye = eye_position;
-	const float required = required_hitchance;
-
-	if (forward.LengthSqr() <= 0.f)
-		return 0.f;
-	const Vector axis = forward * (1.f / forward.Length());
-
+	float required = required_hitchance;
 	float maximum_spread = spread_cache.maximum_radius;
-	if (target->best_point.penetrated)
-		maximum_spread += std::tan(1.5f * Math::degs);
-
-	// [FIX JUMP] Мультипойнт на краю хитбокса требует большего допуска spread —
-	// в воздухе при большом spread конус уходит от края. Даём +20% запаса,
-	// чтобы hitchance не завышался для краевых точек.
-	if (target->best_point.multipoint)
-		maximum_spread *= 1.20f;
-
 	maximum_spread = maximum_spread * 1.001f + 0.00001f;
-
-	const float inv_sqrt = 1.f / std::sqrt(1.f + maximum_spread * maximum_spread);
-	const float cone_cosine = inv_sqrt;
-	const float cone_sine = maximum_spread * inv_sqrt;
-
-	auto hitbox_distance = [&](size_t index) -> float {
-		const Vector& relative = hitchance_rays[index].relative_center;
-		const float depth = RageHitbox_t::Dot(relative, axis);
-		const float lateral = (relative - axis * depth).Length();
-		if (depth * cone_cosine + lateral * cone_sine > 0.f)
-			return std::max(0.f, lateral * cone_cosine - depth * cone_sine);
-		return relative.Length();
-		};
-
-	bool reachable = false;
-	for (size_t index = 0; index < hitboxes.size() && !reachable; ++index) {
-		const auto& hitbox = hitboxes[index];
-		if (!hitbox.valid || hitbox.group != desired)
-			continue;
-		if (hitbox_distance(index) <= hitchance_rays[index].bound_radius)
-			reachable = true;
-	}
-	if (!reachable)
-		return std::nextafter(required_hitchance, 0.f);
-
+	float cone_cosine = 1.f / std::sqrt(1.f + maximum_spread * maximum_spread);
+	float cone_sine = maximum_spread * cone_cosine;
+	Vector axis = forward * (1.f / forward.Length());
 	desired_hitboxes.clear();
 	other_hitboxes.clear();
 	desired_hitboxes.reserve(hitboxes.size());
 	other_hitboxes.reserve(hitboxes.size());
-
 	for (size_t index = 0; index < hitboxes.size(); ++index) {
 		const auto& hitbox = hitboxes[index];
 		if (!hitbox.valid)
 			continue;
-		if (hitbox_distance(index) > hitchance_rays[index].bound_radius)
+
+		const Vector& relative = hitchance_rays[index].relative_center;
+		float depth = RageHitbox_t::Dot(relative, axis);
+		float lateral = (relative - axis * depth).Length();
+		float distance = depth * cone_cosine + lateral * cone_sine > 0.f ? std::max(0.f, lateral * cone_cosine - depth * cone_sine) : relative.Length();
+		if (distance > hitchance_rays[index].bound_radius)
 			continue;
+
 		(hitbox.group == desired ? desired_hitboxes : other_hitboxes).push_back(index);
 	}
 
 	if (desired_hitboxes.empty())
 		return 0.f;
 
-	return RageHitboxPacket::Hitchance(
-		hitboxes, hitchance_rays,
-		desired_hitboxes, other_hitboxes,
-		offsets, eye, forward, right, up,
-		required, ctx.weapon_data->m_flRange());
+	return RageHitboxPacket::Hitchance(hitboxes, hitchance_rays, desired_hitboxes, other_hitboxes, offsets, eye, forward, right, up, required, ctx.weapon_data->m_flRange());
 }
 
 bool CRagebot::WeaponReady(int tick_offset, bool check_revolver, Taia_t* result) const {
-	static auto get_time = Memory->Modules.Client.Find(xs("40 53 48 83 EC 30 48 8B 05 ? ? ? ? 48 8B D9 0F 29 74 24 20 48 8D 4C 24 40 F3 0F 10 70 50")).As<Taia_t * (__fastcall*)(Taia_t*, uint32_t)>();
+	static auto get_time = Memory->Modules.Client.Find(xs("40 53 48 83 EC 30 48 8B 05 ? ? ? ? 48 8B D9 0F 29 74 24 20 48 8D 4C 24 40 F3 0F 10 70 50")).As<Taia_t*(__fastcall*)(Taia_t*, uint32_t)>();
 	if (!ctx.pawn || !ctx.weapon || !ctx.weapon_data || !ctx.pawn->Alive() || ctx.pawn->m_bIsDefusing() || ctx.pawn->m_iPlayerState() != 0)
 		return false;
 
@@ -2151,11 +1795,10 @@ bool CRagebot::WeaponReady(int tick_offset, bool check_revolver, Taia_t* result)
 	Taia_t time;
 	auto group = ctx.weapon->m_pEntity()->m_worldGroupId();
 	if (tick_offset) {
-		static auto from_global = Memory->Modules.Client.Find(xs("40 53 48 83 EC 20 48 8B D9 45 85 C0 74 0B 89 11 48 8B C1 48 83 C4 20 5B C3")).As<int* (__fastcall*)(int*, int, uint32_t)>();
+		static auto from_global = Memory->Modules.Client.Find(xs("40 53 48 83 EC 20 48 8B D9 45 85 C0 74 0B 89 11 48 8B C1 48 83 C4 20 5B C3")).As<int*(__fastcall*)(int*, int, uint32_t)>();
 		from_global(&time.tick, ctx.controller->m_nTickBase() + tick_offset, group);
 		time.fraction = 0.f;
-	}
-	else {
+	} else {
 		get_time(&time, group);
 	}
 
@@ -2221,11 +1864,9 @@ void CRagebot::AutoRevolver() {
 	if (EnginePrediction->m_nPostponeFireReadyTicks > tickbase) {
 		if (tickbase < this->next_revolver_cock)
 			return;
-	}
-	else if (EnginePrediction->m_nNextSecondaryAttackTick - 3 > tickbase) {
+	} else if (EnginePrediction->m_nNextSecondaryAttackTick - 3 > tickbase) {
 		button = IN_ATTACK2;
-	}
-	else {
+	} else {
 		this->next_revolver_cock = tickbase + 1;
 		return;
 	}
@@ -2249,7 +1890,7 @@ bool CRagebot::ShouldScope() const {
 
 	return std::any_of(scanned_targets.begin(), scanned_targets.end(), [](const ScannedTarget_t& target) {
 		return target.has_damage;
-		});
+	});
 }
 
 bool CRagebot::CanFire(CCSGOInput* input) {
@@ -2400,7 +2041,7 @@ void CRagebot::Zeusbot(CCSGOInput* input) {
 		return;
 
 	float inaccuracy = std::tan(EnginePrediction->WeaponInaccuracy());
-	for (size_t i = 0; i < EntityList->player_count; ++i) {
+	for (auto i{ 0uz }; i < EntityList->player_count; ++i) {
 		auto& entity = EntityList->players[i];
 		if (!entity.Fill())
 			continue;
@@ -2453,7 +2094,7 @@ void CRagebot::Knifebot(CCSGOInput* input) {
 	if (!settings.automatic_fire && !(ctx.cmd->button_state.held & (IN_ATTACK | IN_ATTACK2)))
 		return;
 
-	for (size_t i = 0; i < EntityList->player_count; ++i) {
+	for (auto i{ 0uz }; i < EntityList->player_count; ++i) {
 		auto& entity = EntityList->players[i];
 		if (!entity.Fill())
 			continue;

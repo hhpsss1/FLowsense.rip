@@ -10,6 +10,7 @@ struct C_CSPlayerPawn;
 struct CCSPlayerController;
 struct CBaseHandle;
 struct C_CSGameRulesProxy;
+struct C_PlantedC4;
 
 struct CachedPlayer_t {
 	CCSPlayerController* controller = nullptr;
@@ -35,6 +36,7 @@ struct CEntityList {
 	size_t weapon_count = 0;
 
 	C_CSGameRulesProxy* game_rules_proxy = {};
+	C_PlantedC4* planted_c4 = nullptr;
 
 	CachedPlayer_t* Find(C_BaseEntity* entity);
 	void OnAdd(CEntityInstance* instance, CBaseHandle handle);

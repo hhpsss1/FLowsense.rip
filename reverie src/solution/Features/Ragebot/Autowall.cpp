@@ -93,38 +93,7 @@ CAutoWall::DamageScale_t CAutoWall::PrepareDamage(C_CSPlayerPawn* target) {
 	scale.head = (ct ? mp_damage_scale_ct_head : mp_damage_scale_t_head)->GetFloat();
 	scale.body = (ct ? mp_damage_scale_ct_body : mp_damage_scale_t_body)->GetFloat();
 	scale.headshot_multiplier = ctx.weapon_data->m_flHeadshotMultiplier();
-
-	// [FIX] Фолбэк-множитель головы: Schema::GetOffset при ненайденном поле
-	// возвращает 0, а чтение по offset 0 мусорно — неотличимо от легитимного 1.f.
-	// Оно и выражалось как "SSG08 выбивает 40 в хед" (base без множителя).
-	// Реальный масштаб в CS2: снайперки/винтовки/пистолеты x4 (SSG08: 40 -> 160),
-	// дробовики x2. Для не-огнестрела фолбэк не применяем.
-	{
-		const int weapon_type = ctx.weapon_data->m_WeaponType();
-		switch (weapon_type) {
-		case WEAPONTYPE_SHOTGUN:
-			scale.headshot_multiplier = 2.0f;
-			break;
-		case WEAPONTYPE_PISTOL:
-		case WEAPONTYPE_SUBMACHINEGUN:
-		case WEAPONTYPE_RIFLE:
-		case WEAPONTYPE_SNIPER_RIFLE:
-		case WEAPONTYPE_MACHINEGUN:
-			if (scale.headshot_multiplier <= 1.0f)
-				scale.headshot_multiplier = 4.0f;
-			break;
-		default:
-			break;
-		}
-	}
-
 	scale.armor_ratio = ctx.weapon_data->m_flArmorRatio() * 0.5f;
-
-	// [FIX] Тот же сценарий для m_flArmorRatio: поле не резолвится -> ratio 0 ->
-	// любой забронированный хит даёт 0 урона. Значение в CS2 ~0.85 (health_damage =
-	// damage * ratio * 0.5). Нежёсткий фолбэк только при нулевом значении.
-	if (scale.armor_ratio <= 0.f)
-		scale.armor_ratio = 0.425f;
 	scale.armor = target->m_ArmorValue();
 	auto items = target->m_pItemServices();
 	scale.helmet = items && items->m_bHasHelmet();
@@ -167,7 +136,7 @@ bool CAutoWall::CanHit(const Vector& start, const Vector& direction, float& dama
 	if (!Trace(data, start, start + direction, nullptr, 4))
 		return false;
 
-	for (int i = 0; i < data.trace_info.size; i++) {
+	for (auto i{ 0uz }; i < data.trace_info.size; i++) {
 		const auto& info = data.trace_info[i];
 		if (info.damage <= 0.f)
 			return false;

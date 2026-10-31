@@ -614,3 +614,16 @@ struct C_CSGameRules {
 struct C_CSGameRulesProxy {
 	C_CSGameRules* GetGameRules() { return *reinterpret_cast<C_CSGameRules**>(reinterpret_cast<uintptr_t>(this) + 0x600); }
 };
+
+struct C_PlantedC4 : public C_BaseEntity {
+	FindField(bool, m_bBombTicking, xs("C_PlantedC4"), xs("m_bBombTicking"));
+	FindField(int, m_nBombSite, xs("C_PlantedC4"), xs("m_nBombSite"));
+	FindField(float, m_flC4Blow, xs("C_PlantedC4"), xs("m_flC4Blow"));
+	FindField(bool, m_bCannotBeDefused, xs("C_PlantedC4"), xs("m_bCannotBeDefused"));
+	FindField(bool, m_bHasExploded, xs("C_PlantedC4"), xs("m_bHasExploded"));
+	FindField(float, m_flTimerLength, xs("C_PlantedC4"), xs("m_flTimerLength"));
+	FindField(bool, m_bBeingDefused, xs("C_PlantedC4"), xs("m_bBeingDefused"));
+	FindField(float, m_flDefuseLength, xs("C_PlantedC4"), xs("m_flDefuseLength"));
+	FindField(float, m_flDefuseCountDown, xs("C_PlantedC4"), xs("m_flDefuseCountDown"));
+	FindField(bool, m_bBombDefused, xs("C_PlantedC4"), xs("m_bBombDefused"));
+};

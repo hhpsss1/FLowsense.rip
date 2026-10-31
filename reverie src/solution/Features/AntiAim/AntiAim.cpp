@@ -106,10 +106,6 @@ void CAntiAim::MouseOverride() {
 
 void CAntiAim::OnCreateMove() {
 	this->indicator_active = false;
-
-	if (!ctx.pawn || !ctx.cmd || !ctx.base_cmd)
-		return;
-
 	const bool aa_enabled = Config::Get<bool>(Vars::Antiaim::Enable);
 	const bool override_enabled = Config::Get<bool>(Vars::Antiaim::MouseOverride);
 
@@ -383,9 +379,6 @@ void CAntiAim::DrawDirectionIndicator() {
 }
 
 float CAntiAim::GetTargetYaw() {
-	if (!ctx.pawn || !ctx.base_cmd)
-		return ctx.base_cmd ? ctx.base_cmd->viewangles().y() : 0.0f;
-
 	float yaw = ctx.base_cmd->viewangles().y();
 	float distance = FLT_MAX;
 	const Vector origin = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();

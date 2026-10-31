@@ -7,6 +7,8 @@ struct ID3D11ShaderResourceView;
 struct CMisc {
 	void BuyBot();
 	void OnPresent();
+	void Watermark();
+	void Indicators();
 	inline static bool buy_pending{ true };
 	inline static std::atomic<uint64_t> hitmarker_time{ 0 };
 
