@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "Ragebot.h"
 #include <emmintrin.h>
@@ -218,9 +218,9 @@ namespace RageHitboxPacket {
 }
 
 // ---------------------------------------------------------------------------
-// CHitchanceCache — теперь с flags (penetrated | multipoint) в ключе.
+// CHitboxHitchanceCache — теперь с flags (penetrated | multipoint) в ключе.
 // ---------------------------------------------------------------------------
-struct CHitchanceCache {
+struct CHitboxHitchanceCache {
 	struct Key {
 		uint64_t record_revision;
 		uint64_t spread_revision;

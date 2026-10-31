@@ -1,4 +1,4 @@
-﻿#include <shared.h>
+#include <shared.h>
 #include "../../SDK/Valve/Interfaces/NetworkClient.h"
 #include <cfloat>
 #include <cmath>

@@ -1,7 +1,7 @@
 #include <shared.h>
 #include "../../Gui/Blur/Blur.h"
 #include "../../Utils/ThreadPool/ThreadPool.h"
-#include "../../Gui/Astral/AstralBridge.h"
+#include "../../Gui/Customflow/CustomflowBridge.h"
 
 static void(__fastcall* setChannelVerbosity)(int, int) = nullptr;
 static int shootingChannel = -1;
@@ -105,8 +105,8 @@ HRESULT __stdcall Present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT f
 
 	Draw->BeginFrame();
 	{
-		// Astral menu replaces Gui->Render() entirely.
-		AstralBridge::Frame();
+		// Customflow menu replaces Gui->Render() entirely.
+		CustomflowBridge::Frame();
 
 		Visuals->Player.OnPresent();
 		GrenadeTrajectory->OnPresent();
@@ -125,24 +125,6 @@ HRESULT __stdcall Present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT f
 
 	if (draw_data && draw_data->Valid && draw_data->CmdListsCount > 0 && draw_data->TotalVtxCount > 0)
 		Draw->SubmitDrawData(draw_data);
-
-	Draw->ReleaseFrameTextures();
-
-	return original(swap_chain, sync_interval, flags);
-}
-					about_draw_data.CmdLists = about_vector;
-					about_draw_data.CmdListsCount = about_vector.Size;
-					about_draw_data.TotalVtxCount = about_vtx;
-					about_draw_data.TotalIdxCount = about_idx;
-
-					Draw->SubmitDrawData(&about_draw_data);
-				}
-			}
-		}
-		else {
-			Draw->SubmitDrawData(draw_data);
-		}
-	}
 
 	Draw->ReleaseFrameTextures();
 
@@ -1112,13 +1094,13 @@ long Hooks_t::WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	Input->OnWndProc(msg, wparam, lparam);
 
 	if (Input->IsKeyReleased(VK_INSERT) || Input->IsKeyReleased(VK_DELETE)) {
-		AstralBridge::ToggleVisible();
+		CustomflowBridge::ToggleVisible();
 
 		static auto rel = GetOriginal(&IsRelativeMouseMode);
-		rel(Inputs, AstralBridge::Get().Visible() ? false : Var->winapi.active_mouse_input);
+		rel(Inputs, CustomflowBridge::Get().Visible() ? false : Var->winapi.active_mouse_input);
 	}
 
-	const bool menu_open = AstralBridge::Get().Visible();
+	const bool menu_open = CustomflowBridge::Get().Visible();
 
 	if (menu_open) {
 		ImGui_ImplWin32_WndProcHandler(hwnd, msg, wparam, lparam);

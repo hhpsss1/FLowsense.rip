@@ -246,6 +246,30 @@
     <ClCompile Include="Gui\Elements\Slider.cpp" />
     <ClCompile Include="Gui\Elements\Window.cpp" />
     <ClCompile Include="Gui\Gui.cpp" />
+    <ClCompile Include="Gui\Customflow\CustomflowBridge.cpp">
+      <ObjectFileName>$(IntDir)cf_CustomflowBridge.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\draw.cpp">
+      <ObjectFileName>$(IntDir)cf_draw.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\icons.cpp">
+      <ObjectFileName>$(IntDir)cf_icons.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\menu.cpp">
+      <ObjectFileName>$(IntDir)cf_menu.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\pages.cpp">
+      <ObjectFileName>$(IntDir)cf_pages.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\persist.cpp">
+      <ObjectFileName>$(IntDir)cf_persist.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\preview.cpp">
+      <ObjectFileName>$(IntDir)cf_preview.obj</ObjectFileName>
+    </ClCompile>
+    <ClCompile Include="Gui\Customflow\ui.cpp">
+      <ObjectFileName>$(IntDir)cf_ui.obj</ObjectFileName>
+    </ClCompile>
     <ClCompile Include="Gui\Pages\HotkeysContent.cpp" />
     <ClCompile Include="Gui\Pages\MiscContent.cpp" />
     <ClCompile Include="Gui\Pages\RagebotContent.cpp" />
@@ -553,6 +577,15 @@
     <ClInclude Include="Features\Ragebot\SpreadCache.h" />
     <ClInclude Include="Features\World\World.h" />
     <ClInclude Include="Gui\Blur\Blur.h" />
+    <ClInclude Include="Gui\Customflow\CustomflowBridge.h" />
+    <ClInclude Include="Gui\Customflow\customflow_config.h" />
+    <ClInclude Include="Gui\Customflow\draw.h" />
+    <ClInclude Include="Gui\Customflow\icons.h" />
+    <ClInclude Include="Gui\Customflow\menu.h" />
+    <ClInclude Include="Gui\Customflow\persist.h" />
+    <ClInclude Include="Gui\Customflow\preview.h" />
+    <ClInclude Include="Gui\Customflow\spec.h" />
+    <ClInclude Include="Gui\Customflow\ui.h" />
     <ClInclude Include="Gui\Data\FontsAwesome.h" />
     <ClInclude Include="Gui\Data\PixelFont.h" />
     <ClInclude Include="Gui\Settings\Colors.h" />
