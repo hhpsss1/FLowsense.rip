@@ -54,7 +54,7 @@ bool BeginChildEx(const char* name, ImGuiID id, const ImVec2& size_arg, ImGuiChi
         size.y = *state;
 
     ImFont* icon_font = Var->font.fa[0];
-    ImFont* title_font = Var->font.inter[5];
+    ImFont* title_font = Var->font.inter[1] ? Var->font.inter[1] : Var->font.inter[0];
 
     const float label_padding_x = 4.0f;
     const float label_offset_y_geom = 1.0f;
@@ -80,10 +80,11 @@ bool BeginChildEx(const char* name, ImGuiID id, const ImVec2& size_arg, ImGuiChi
 
     const float backup_border_size = 0.0f;
     const float backup_child_rounding = g.Style.ChildRounding;
-    g.Style.ChildRounding = Var->window.rounding;
+    g.Style.ChildRounding = 0.f;
 
     const float a = g.Style.Alpha;
-    Draw->RectFilled(parent_window->DrawList, card_pos, card_pos + size, Draw->GetClr(Colors->child.background, 0.5f), Var->window.rounding, ImDrawFlags_RoundCornersAll);
+    Draw->RectFilled(parent_window->DrawList, card_pos, card_pos + size, Draw->GetClr(Colors->child.background.Value, 1.f), 0.f, ImDrawFlags_RoundCornersAll);
+    Draw->Rect(parent_window->DrawList, card_pos, card_pos + size, Var->window.outline_col, 0.f, 0, 1.f);
 
     float text_x = label_padding_x;
 

@@ -544,6 +544,7 @@ void CGui::RenderSkinsContent() {
 					this->SliderFloat(xs("Float"), &s_pending_wear, 0.0001f, 1.0f, xs("%.4f"));
 					ImGui::PopStyleVar();
 				}
+				ImGui::Dummy(ImVec2(left_col_w, scroll_h));
 				ImGui::EndChild();
 
 				ImVec2 btn_min(col_pos.x, col_pos.y + avail_h - footer_btn_h);
@@ -1145,6 +1146,7 @@ void CGui::RenderSkinsContent() {
 						}
 					}
 				}
+				ImGui::Dummy(ImVec2(right_col_w, grid_h));
 				ImGui::EndChild();
 
 				const float save_btn_w = 130.f;
@@ -1581,6 +1583,7 @@ void CGui::RenderSkinsContent() {
 						ImGui::SetCursorScreenPos(ImVec2(row_p.x, row_p.y + pill_h + 12.f));
 					}
 				}
+				ImGui::Dummy(ImVec2(left_col_w, scroll_h));
 				ImGui::EndChild();
 
 				ImVec2 btn_min(col_pos.x, col_pos.y + avail_h - footer_btn_h);
@@ -1741,11 +1744,13 @@ void CGui::RenderSkinsContent() {
 						ImGui::PopID();
 					}
 				}
+				ImGui::Dummy(ImVec2(right_col_w, grid_h));
 				ImGui::EndChild();
 			}
 			ImGui::EndChild();
 		}
 	}
+	ImGui::Dummy(ImVec2(root_w, root_h));
 	ImGui::EndChild();
 	ImGui::PopStyleVar();
 }

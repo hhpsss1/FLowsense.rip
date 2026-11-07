@@ -34,6 +34,12 @@ void CMovement::BeforePrediction(CUserCommand* cmd) {
 	AirStrafer(cmd);
 	this->FastStop(cmd);
 
+	// advanced movement exploits
+	this->Edgebug(cmd);
+	this->Texturebug(cmd);
+	this->Pixelsurf(cmd);
+	this->MovementPrediction(cmd);
+
 	if (jump_bug && !Config::Get<bool>(Vars::Movement::Strafer))
 		PrepareJumpSubticks(cmd);
 }
@@ -1030,6 +1036,269 @@ void CMovement::Rotation() {
 		ctx.cmd->button_state.held |= IN_MOVELEFT;
 	else if (ctx.base_cmd->leftmove() < 0.0f)
 		ctx.cmd->button_state.held |= IN_MOVERIGHT;
+}
+
+
+// ============================================================================
+//  Edgebug � cancels fall damage when landing on surface edges
+//  Adapted from IDA dump sub_1801F97B0 (�������.txt)
+// ============================================================================
+void CMovement::Edgebug(CUserCommand* cmd) {
+	if (!Config::Get<bool>(Vars::Movement::Edgebug) || !ctx.pawn || !ctx.pawn->Alive() || !cmd)
+		return;
+
+	auto mt = ctx.pawn->m_nActualMoveType();
+	if (mt == MOVETYPE_LADDER || mt == MOVETYPE_NOCLIP || mt == MOVETYPE_OBSERVER)
+		return;
+
+	if (ctx.pawn->m_fFlags() & FL_ONGROUND)
+		return;
+
+	Vector velocity = ctx.pawn->m_vecVelocity();
+	if (velocity.z > -150.f)
+		return;
+
+	// track fall start
+	if (m_flLastFallStart == 0.f) {
+		m_flLastFallStart = EnginePrediction->curtime();
+		m_vecFallStart = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();
+	}
+
+	// trace down to find ground distance
+	auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
+	auto trace = Physics->MakeTrace();
+
+	CRay ray{};
+	Vector start = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();
+	Vector end = start + Vector(0.f, 0.f, -64.f);
+	ray.Init(start, end);
+
+	Physics->TraceRay(&ray, &start, &end, &filter, &trace);
+
+	if (trace.fraction >= 1.f)
+		return; // no ground nearby
+
+	float ground_dist = trace.fraction * 64.f;
+	if (ground_dist > 80.f)
+		return; // too far from ground
+
+	// check if surface normal is steep (edge)
+	Vector normal = trace.hit_normal;
+	if (std::abs(normal.z) > 0.7f)
+		return; // flat ground, not an edge
+
+	// edgebug: force jump at the right moment to cancel fall
+	if (!m_bEdgebugActive && ground_dist < 16.f) {
+		m_bEdgebugActive = true;
+
+		// apply jump via subtick
+		if (Protobuf->ReserveSubtickMoveSteps(cmd, 2 + Config::Get<bool>(Vars::Ragebot::Enable), 0.f)) {
+			auto press = Protobuf->AddSubtickMoveStep(cmd, 0.f);
+			if (press) {
+				press->set_button(IN_JUMP);
+				press->set_pressed(true);
+			}
+			auto release = press ? Protobuf->AddSubtickMoveStep(cmd, 1.f / 64.f) : nullptr;
+			if (release) {
+				release->set_button(IN_JUMP);
+				release->set_pressed(false);
+			}
+		}
+	}
+
+	if (m_bEdgebugActive && (ctx.pawn->m_fFlags() & FL_ONGROUND)) {
+		m_bEdgebugActive = false;
+		m_flLastFallStart = 0.f;
+		m_vecFallStart = {};
+	}
+}
+
+// ============================================================================
+//  Texturebug � sticks to texture seams to reduce fall speed
+//  Adapted from IDA dump sub_180302D80 (���������� ���.txt)
+// ============================================================================
+void CMovement::Texturebug(CUserCommand* cmd) {
+	if (!Config::Get<bool>(Vars::Movement::Texturebug) || !ctx.pawn || !ctx.pawn->Alive() || !cmd)
+		return;
+
+	auto mt = ctx.pawn->m_nActualMoveType();
+	if (mt == MOVETYPE_LADDER || mt == MOVETYPE_NOCLIP || mt == MOVETYPE_OBSERVER)
+		return;
+
+	Vector velocity = ctx.pawn->m_vecVelocity();
+	if (velocity.z > -100.f)
+		return;
+
+	// trace 4 rays in a cross pattern around the player to find texture seams
+	Vector origin = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();
+
+	auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
+
+	struct TraceResult { Vector normal; float fraction; bool hit; };
+	TraceResult results[4] = {};
+
+	Vector dirs[4] = {
+		Vector(1.f, 0.f, 0.f),
+		Vector(-1.f, 0.f, 0.f),
+		Vector(0.f, 1.f, 0.f),
+		Vector(0.f, -1.f, 0.f),
+	};
+
+	for (int i = 0; i < 4; ++i) {
+		CRay ray{};
+		Vector s = origin + dirs[i] * 16.f;
+		Vector e = s + Vector(0.f, 0.f, -32.f);
+		ray.Init(s, e);
+
+		CGameTrace tr{};
+		Physics->TraceRay(&ray, &s, &e, &filter, &tr);
+
+		results[i].hit = tr.fraction < 1.f;
+		results[i].fraction = tr.fraction;
+		results[i].normal = tr.hit_normal;
+	}
+
+	// check if we're on a texture seam (different surface normals on adjacent traces)
+	bool on_seam = false;
+	for (int i = 0; i < 4 && !on_seam; ++i) {
+		if (!results[i].hit) continue;
+		for (int j = i + 1; j < 4; ++j) {
+			if (!results[j].hit) continue;
+			Vector diff = results[i].normal - results[j].normal;
+			if (diff.LengthSqr() > 0.5f) {
+				on_seam = true;
+				break;
+			}
+		}
+	}
+
+	if (!on_seam) {
+		m_bTexturebugActive = false;
+		return;
+	}
+
+	if (!m_bTexturebugActive)
+		m_bTexturebugActive = true;
+
+	// apply upward counter-force to reduce fall speed when on seam
+	if (velocity.z < -10.f) {
+		auto base = cmd->pb.mutable_base();
+		base->set_forwardmove(0.f);
+		base->set_leftmove(0.f);
+
+		Vector move_dir = -velocity;
+		move_dir.z = 0.f;
+		move_dir.Normalize();
+
+		float strength = std::clamp(std::abs(velocity.z) / 400.f, 0.1f, 0.6f);
+		float yaw = Math::Rad2Deg(std::atan2(move_dir.y, move_dir.x));
+		float fmove = std::cos(Math::Deg2Rad(yaw)) * strength * 450.f;
+		float lmove = std::sin(Math::Deg2Rad(yaw)) * strength * 450.f;
+
+		cmd->pb.mutable_base()->set_forwardmove(fmove);
+		cmd->pb.mutable_base()->set_leftmove(lmove);
+	}
+}
+
+// ============================================================================
+//  Pixelsurf � precise edge surfing using multi-ray traces
+//  Adapted from IDA dump sub_1801E79D0 (�������� �����.txt)
+// ============================================================================
+void CMovement::Pixelsurf(CUserCommand* cmd) {
+	if (!Config::Get<bool>(Vars::Movement::Pixelsurf) || !ctx.pawn || !ctx.pawn->Alive() || !cmd)
+		return;
+
+	auto mt = ctx.pawn->m_nActualMoveType();
+	if (mt == MOVETYPE_LADDER || mt == MOVETYPE_NOCLIP || mt == MOVETYPE_OBSERVER)
+		return;
+
+	Vector velocity = ctx.pawn->m_vecVelocity();
+	if (velocity.z > -80.f)
+		return;
+
+	Vector origin = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();
+	auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
+
+	// grid of traces below player to find exact edge
+	const int grid = 4;
+	const float spacing = 8.f;
+	bool found_edge = false;
+	Vector edge_normal{};
+
+	for (int x = -1; x <= 1 && !found_edge; ++x) {
+		for (int y = -1; y <= 1 && !found_edge; ++y) {
+			CRay ray{};
+			Vector s = origin + Vector(x * spacing, y * spacing, 4.f);
+			Vector e = s + Vector(0.f, 0.f, -48.f);
+			ray.Init(s, e);
+
+			CGameTrace tr{};
+			Physics->TraceRay(&ray, &s, &e, &filter, &tr);
+
+			if (tr.fraction < 1.f && tr.fraction > 0.1f) {
+				if (std::abs(tr.hit_normal.z) < 0.6f) {
+					found_edge = true;
+					edge_normal = tr.hit_normal;
+				}
+			}
+		}
+	}
+
+	if (!found_edge) {
+		m_bPixelsurfActive = false;
+		return;
+	}
+
+	if (!m_bPixelsurfActive)
+		m_bPixelsurfActive = true;
+
+	// apply force to stay on the pixel edge
+	Vector surf_dir = Vector(-edge_normal.y, edge_normal.x, 0.f);
+	surf_dir.Normalize();
+
+	float strength = std::clamp(std::abs(velocity.z) / 500.f, 0.1f, 0.8f);
+
+	auto base = cmd->pb.mutable_base();
+	base->set_forwardmove(surf_dir.x * strength * 500.f);
+	base->set_leftmove(surf_dir.y * strength * 500.f);
+
+	constexpr uint64_t move_mask = IN_FORWARD | IN_BACK | IN_MOVELEFT | IN_MOVERIGHT;
+	cmd->button_state.held &= ~move_mask;
+	cmd->button_state.toggle &= ~move_mask;
+	cmd->button_state.scroll &= ~move_mask;
+
+	if (surf_dir.x > 0.01f) cmd->button_state.held |= IN_FORWARD;
+	else if (surf_dir.x < -0.01f) cmd->button_state.held |= IN_BACK;
+	if (surf_dir.y > 0.01f) cmd->button_state.held |= IN_MOVELEFT;
+	else if (surf_dir.y < -0.01f) cmd->button_state.held |= IN_MOVERIGHT;
+}
+
+// ============================================================================
+//  MovementPrediction � predicts player position N ticks ahead
+//  Adapted from IDA dump sub_1801EDE70 (������� �����.txt)
+// ============================================================================
+void CMovement::MovementPrediction(CUserCommand* cmd) {
+	if (!Config::Get<bool>(Vars::Movement::Prediction) || !ctx.pawn || !ctx.pawn->Alive() || !cmd)
+		return;
+
+	Vector predicted = ctx.pawn->m_pGameSceneNode()->m_vecAbsOrigin();
+	Vector vel = ctx.pawn->m_vecVelocity();
+
+	cvar(sv_gravity);
+	float gravity = sv_gravity ? sv_gravity->GetFloat() * ctx.pawn->m_flActualGravityScale() : 800.f;
+
+	int predict_ticks = Config::Get<int>(Vars::Ragebot::FutureTicks);
+	if (predict_ticks <= 0)
+		predict_ticks = 6;
+
+	for (int i = 0; i < predict_ticks; ++i) {
+		predicted = predicted + vel * INTERVAL_PER_TICK;
+		if (!(ctx.pawn->m_fFlags() & FL_ONGROUND)) {
+			vel.z -= gravity * INTERVAL_PER_TICK * 0.5f;
+		}
+	}
+
+	(void)predicted;
 }
 
 CMovement* Movement = new CMovement();

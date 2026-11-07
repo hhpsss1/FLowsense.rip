@@ -481,7 +481,75 @@ bool CLagCompensation::ValidRecord(const LagRecord* record, int processing_tick)
 	}
 
 	double age = (static_cast<double>(processing_tick) - record->m_nSimulationTick) * INTERVAL_PER_TICK;
-	return age >= 0.0 && age <= max_unlag;
+	int backtrack_ticks = Config::Get<bool>(Vars::Ragebot::Backtrack) ? Config::Get<int>(Vars::Ragebot::BacktrackTicks) : 0;
+	return age >= 0.0 && age <= (backtrack_ticks > 0 ? static_cast<double>(backtrack_ticks) * INTERVAL_PER_TICK : max_unlag);
+}
+
+int CLagCompensation::GetBestBacktrackTick(C_CSPlayerPawn* player, int processing_tick, int max_ticks) const {
+	if (!player || max_ticks <= 0 || processing_tick < 0)
+		return 0;
+
+	const int handle = player->GetHandle().ToInt();
+	auto found = lag_records.find(handle);
+	if (found == lag_records.end())
+		return 0;
+
+	const auto& records = found->second;
+	if (records.empty())
+		return 0;
+
+	// Find the newest valid record as baseline
+	const LagRecord* newest = nullptr;
+	for (auto it = records.rbegin(); it != records.rend(); ++it) {
+		if (ValidRecord(&*it, processing_tick)) {
+			newest = &*it;
+			break;
+		}
+	}
+	if (!newest)
+		return 0;
+
+	// Predict best tick: prefer ticks where velocity is stable (low acceleration)
+	// and the player is on ground (more predictable)
+	int best_tick_offset = 0;
+	float best_score = -1.f;
+
+	for (int offset = 0; offset <= max_ticks; ++offset) {
+		int target_tick = newest->m_nSimulationTick + offset;
+		if (target_tick > processing_tick)
+			break;
+
+		// Find record closest to this tick
+		const LagRecord* candidate = nullptr;
+		for (auto it = records.rbegin(); it != records.rend(); ++it) {
+			if (it->m_nSimulationTick <= target_tick && ValidRecord(&*it, processing_tick)) {
+				candidate = &*it;
+				break;
+			}
+		}
+		if (!candidate)
+			continue;
+
+		// Score: prefer on-ground, low velocity change, recent records
+		float score = 0.f;
+		if (candidate->m_fFlags & FL_ONGROUND)
+			score += 10.f;
+
+		// Lower velocity = more predictable
+		float speed = candidate->m_vecVelocity.Length2d();
+		score += std::max(0.f, 20.f - speed * 0.05f);
+
+		// Prefer records closer to processing tick (less extrapolation needed)
+		int tick_diff = processing_tick - candidate->m_nSimulationTick;
+		score += std::max(0.f, 5.f - tick_diff * 0.5f);
+
+		if (score > best_score) {
+			best_score = score;
+			best_tick_offset = processing_tick - candidate->m_nSimulationTick;
+		}
+	}
+
+	return best_tick_offset;
 }
 
 void CLagCompensation::Reset() {

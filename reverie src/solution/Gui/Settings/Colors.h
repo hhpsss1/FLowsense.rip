@@ -154,7 +154,7 @@ struct Color4_f {
 };
 
 struct Colors_t {
-    ImColor accent{ 152, 182, 248 };
+    ImColor accent{ 110, 200, 110 };
 
     int current_theme{ 0 };
 

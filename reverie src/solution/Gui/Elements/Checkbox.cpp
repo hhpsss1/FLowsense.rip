@@ -360,13 +360,13 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
     const ImVec2 pos = window->DC.CursorPos;
     const float avail = GetContentRegionAvail().x;
 
-    const float box_sz = 18.f;
-    const float row_h = 24.f;
-    const float box_r = 5.f;
-    const float swatch_sz = 18.f;
-    const float swatch_gap = 6.f;
-    const float gear_sz = 18.f;
-    const float badge_sz = 14.f;
+    const float box_sz = 14.f;
+    const float row_h = 20.f;
+    const float box_r = 0.f;
+    const float swatch_sz = 14.f;
+    const float swatch_gap = 4.f;
+    const float gear_sz = 14.f;
+    const float badge_sz = 10.f;
     const float right_pad = 0.f;
 
     color_count = ImClamp(color_count, 0, 4);
@@ -429,7 +429,7 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
     dl->AddRectFilled(box_bb.Min, box_bb.Max, Draw->GetClr(ImColor(bg_col)), box_r);
 
     if (state->fill < 0.99f) {
-        float b_alpha = ImLerp(0.04f, 0.10f, state->hover);
+        float b_alpha = ImLerp(0.30f, 0.60f, state->hover);
         dl->AddRect(box_bb.Min, box_bb.Max, Draw->GetClr(Colors->divider, b_alpha), box_r, 0, 1.f);
     }
 

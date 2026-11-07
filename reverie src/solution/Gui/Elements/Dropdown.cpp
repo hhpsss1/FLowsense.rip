@@ -269,11 +269,11 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad_x, pad_y));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, item_gap));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.f, 0.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 2.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.f);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));
@@ -393,11 +393,11 @@ bool begin_config_combo(const char* label, const char* preview_value, ImVec2 box
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.f, 8.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.f, 4.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.f, 0.f));
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 2.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.f);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));
@@ -1006,11 +1006,11 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad_x, pad_y));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, item_gap));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.f, 0.f));
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.f);
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 2.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.f);
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));

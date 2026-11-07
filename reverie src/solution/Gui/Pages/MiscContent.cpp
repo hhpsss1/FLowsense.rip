@@ -11,6 +11,10 @@ void CGui::RenderMiscContent() {
 			this->Checkbox(xs("Jump Bug"), &Config::Get<bool>(Vars::Movement::JumpBug));
 			this->Checkbox(xs("Auto Strafer"), &Config::Get<bool>(Vars::Movement::Strafer));
 			this->Checkbox(xs("Leg Movement"), &Config::Get<bool>(Vars::Movement::LegMovement));
+			this->Checkbox(xs("Edgebug"), &Config::Get<bool>(Vars::Movement::Edgebug));
+			this->Checkbox(xs("Texturebug"), &Config::Get<bool>(Vars::Movement::Texturebug));
+			this->Checkbox(xs("Pixelsurf"), &Config::Get<bool>(Vars::Movement::Pixelsurf));
+			this->Checkbox(xs("Prediction"), &Config::Get<bool>(Vars::Movement::Prediction));
 		}
 		this->EndChild();
 
@@ -28,6 +32,11 @@ void CGui::RenderMiscContent() {
 
 			this->CheckboxEx(xs("Indicators"), &Config::Get<bool>(Vars::Misc::Indicators), false, nullptr, 0, [this]() {
 				this->SliderInt(xs("Indicators Opacity"), &Config::Get<int>(Vars::Misc::IndicatorOpacity), 0, 255);
+			});
+
+			Color_t* crosshair_color[1] = { &Config::Get<Color_t>(Vars::Misc::CrosshairIndicatorsColor) };
+			this->CheckboxEx(xs("Crosshair Indicators"), &Config::Get<bool>(Vars::Misc::CrosshairIndicators), false, crosshair_color, 1, [this]() {
+				this->SliderInt(xs("Crosshair Indicators Opacity"), &Config::Get<int>(Vars::Misc::CrosshairIndicatorsOpacity), 0, 255);
 			});
 
 			if (Config::Get<bool>(Vars::Misc::Indicators)) {

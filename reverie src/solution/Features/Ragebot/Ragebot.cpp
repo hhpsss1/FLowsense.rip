@@ -148,6 +148,11 @@ weapon_settings_t CRagebot::GetWeaponSettings(int weapon_id) {
 	result.minimum_damage = Config::Get<int>(grp->MinimumDamage);
 	result.maximum_fov = std::clamp(Config::Get<float>(grp->MaximumFov), 0.f, 180.f);
 	result.maximum_distance = std::max(Config::Get<float>(grp->MaximumDistance), 0.f);
+	result.stop_speed = std::clamp(Config::Get<float>(grp->StopSpeed), 1.f, 100.f);
+	result.resolver = Config::Get<bool>(grp->Resolver);
+	result.resolver_mode = Config::Get<int>(grp->ResolverMode);
+	result.resolver_hitbox_priority = Config::Get<int>(grp->ResolverHitboxPriority);
+	result.resolver_yaw_range = std::clamp(Config::Get<float>(grp->ResolverYawRange), 1.f, 180.f);
 	settings_prefix = group_id;
 	return result;
 }
@@ -187,23 +192,33 @@ std::span<LagRecord*> CRagebot::SelectRecords(C_CSPlayerPawn* player, bool extra
 	if (processing_tick < 0)
 		return selected_records;
 
-	if (extrapolate) {
+	if (extrapolate && Config::Get<bool>(Vars::Ragebot::Prediction)) {
 		if (auto record = LagCompensation->GetExtrapolatedRecord(player, processing_tick)) {
 			selected_records.push_back(record);
-			return selected_records;
 		}
 	}
 
 	auto& records = found->second;
-	// No backtrack: CS2 removed server-side backtrack. Only the newest valid
-	// (and, when enabled, extrapolated) record is allowed to be aimed at.
+	// Backtrack: allow records within configured tick window (6-14 ticks).
 	for (size_t i = records.size(); i > 0; --i) {
 		auto record = &records[i - 1];
 		if (!LagCompensation->ValidRecord(record, processing_tick))
 			continue;
 
 		selected_records.push_back(record);
-		break;
+	}
+
+	// Backtrack prediction: sort so the predicted best tick is scanned first.
+	if (Config::Get<bool>(Vars::Ragebot::BacktrackPrediction) && !selected_records.empty()) {
+		int best_offset = LagCompensation->GetBestBacktrackTick(player, processing_tick, Config::Get<int>(Vars::Ragebot::BacktrackPredictionTicks));
+		int target_tick = processing_tick - best_offset;
+
+		std::sort(selected_records.begin(), selected_records.end(),
+			[target_tick](LagRecord* a, LagRecord* b) {
+				int da = std::abs(a->m_nSimulationTick - target_tick);
+				int db = std::abs(b->m_nSimulationTick - target_tick);
+				return da < db;
+			});
 	}
 
 	return selected_records;
@@ -216,11 +231,26 @@ void CRagebot::SelectPoints(LagRecord* record, std::vector<AimPoint_t>& points, 
 	int record_priority = record->shooting ? 2 : (record->m_angEyeAngles.x < 10.f ? 1 : 0);
 	record_priority += GlobalVars->tick_count - record->update_tick < 12;
 
+	// --- CS2 resolver integration ---
+	UpdateResolver(record->player, record);
+	float resolved_yaw = ResolveYaw(record->player, record);
+	int resolver_priority = GetResolverHitboxPriority(record, resolved_yaw);
+
 	for (auto i{ 0uz }; i < record->hitboxes.size(); ++i) {
 		const auto& hitbox = record->hitboxes[i];
 		int group = HitboxGroup(hitbox);
 		if (group < 0 || !settings.hitboxes[group] || (group == 0 && settings.force_body_aim) || (head_only && group != 0))
 			continue;
+
+		// Resolver hitbox priority: deprioritize hitboxes that don't match resolved aim direction
+		if (settings.resolver && resolver_priority >= 0) {
+			int group_priority = GetResolverHitboxPriority(record, resolved_yaw);
+			// If this group doesn't match the preferred priority, reduce point_scale slightly
+			if (group_priority != group && group_priority == 0 && group != 0) {
+				// Preferring head, this is body - reduce scale
+				// We'll handle this by adjusting scale below
+			}
+		}
 
 		bool body = hitbox.hitgroup == 2 || hitbox.hitgroup == 3;
 		int center_phase = body ? 3 : 1;
@@ -249,6 +279,10 @@ void CRagebot::SelectPoints(LagRecord* record, std::vector<AimPoint_t>& points, 
 		}
 
 		float scale = group == 0 ? settings.point_scale : settings.body_point_scale;
+		// Resolver: reduce scale for non-priority hitboxes
+		if (settings.resolver && resolver_priority >= 0 && group != resolver_priority) {
+			scale *= 0.5f;
+		}
 		if (!settings.multipoints[group] || scale <= 0.f)
 			continue;
 
@@ -706,6 +740,18 @@ void CRagebot::Run(CCSGOInput* input) {
 	if ((ctx.pawn->m_fFlags() & FL_FROZEN) || ctx.pawn->m_bIsDefusing())
 		return;
 
+#if defined(_DEBUG) || defined(DEBUG_RAGEBOT)
+	if (ctx.cmd->command_number % 64 == 0)
+		Logger->Log(xs("[Ragebot] cmd=%d clip=%d weapon_ready=%d spread_valid=%d hitchance=%.0f auto_fire=%d attack=%d"),
+			ctx.cmd->command_number,
+			ctx.weapon ? ctx.weapon->m_iClip1() : -1,
+			WeaponReady() ? 1 : 0,
+			EnginePrediction->WeaponAccuracyValid() ? 1 : 0,
+			settings.hitchance,
+			settings.automatic_fire ? 1 : 0,
+			ctx.cmd->button_state.held & IN_ATTACK ? 1 : 0);
+#endif
+
 	this->AutoRevolver();
 
 	eye_position = ctx.eye_position;
@@ -753,6 +799,7 @@ void CRagebot::Run(CCSGOInput* input) {
 
 	CAutoWall::Batch_t batch;
 	FindTargets();
+	CollectTargetsBySlots();
 	stop_target = {};
 	Vector stop_velocity = ctx.pawn->m_vecVelocity();
 	stop_velocity.z = 0.f;
@@ -793,6 +840,10 @@ void CRagebot::Run(CCSGOInput* input) {
 		last_target_handle = target->player->GetHandle().ToInt();
 		last_target_shot = ctx.cmd->command_number;
 		Movement->PeekAssistState.pending_shot_return = true;
+
+		LogShot(ctx.cmd->command_number, GlobalVars->tick_count, target->player,
+			target->best_point.point, target->angle, target->best_point.damage, target->hitchance, true);
+		MarkShotHit(ctx.cmd->command_number);
 	}
 }
 
@@ -818,6 +869,8 @@ void CRagebot::OnPresent() {
 
 	if (NowMs() - debug_stamp_ms.load() > 400)
 		return;
+
+	DrawShotTelemetry();
 
 	static thread_local std::vector<DebugPoint_t> Points;
 	static thread_local uint64_t seen_revision = ~0ull;
@@ -1198,8 +1251,59 @@ void CRagebot::GetMultipoints(LagRecord* record, const ScanHitbox_t& hitbox, Aim
 	}
 }
 
+void CRagebot::ReserveTargets(int count) {
+	targets.fill({});
+	target_count = 0;
+	target_slot_count = 0;
+	target_slots.fill({});
+}
+
+void CRagebot::InsertTarget(int slot, float score, int index) {
+	if (slot < 0 || slot >= 3)
+		return;
+
+	auto& tslot = target_slots[slot];
+	if (tslot.player != nullptr && target_slot_count >= 3)
+		return;
+
+	targets[target_count] = { nullptr, 0.f, 0.f, slot };
+	auto& t = targets[target_count];
+	target_count++;
+	target_slot_count++;
+}
+
+void CRagebot::CollectTargetsBySlots() {
+	target_slot_count = 0;
+	target_slots.fill({});
+
+	float slot_best[3] = { 0.f, 0.f, 0.f };
+	int slot_idx[3] = { -1, -1, -1 };
+
+	for (size_t i = 0; i < target_count; ++i) {
+		auto& t = targets[i];
+		if (!t.player || !t.player->Alive() || t.player == ctx.pawn || !t.player->Enemy(ctx.pawn) || t.player->m_bGunGameImmunity())
+			continue;
+
+		float score = 1.f / (t.distance_squared + 1.f) + t.fov * 0.001f;
+		int best_slot = -1;
+		for (int s = 0; s < 3; ++s) {
+			if (score > slot_best[s]) {
+				best_slot = s;
+				break;
+			}
+		}
+		if (best_slot < 0) continue;
+
+		t.slot = best_slot;
+		slot_best[best_slot] = score;
+		slot_idx[best_slot] = static_cast<int>(i);
+		target_slot_count++;
+	}
+}
+
 void CRagebot::FindTargets() {
 	target_count = 0;
+	ReserveTargets(64);
 
 	static constexpr float cull_margin = 48.f;
 	const float cull_distance = settings.maximum_distance + cull_margin;
@@ -1222,7 +1326,7 @@ void CRagebot::FindTargets() {
 		const Vector origin = node->m_vecAbsOrigin();
 		if (settings.maximum_distance > 0.f) {
 			Vector center = origin;
-			center.z += 36.f; // roughly mid-body, so feet-vs-eye height doesn't skew the check
+			center.z += 36.f;
 			if ((center - eye_position).LengthSqr() > cull_squared)
 				continue;
 		}
@@ -1230,12 +1334,19 @@ void CRagebot::FindTargets() {
 		if (std::any_of(targets.begin(), targets.begin() + target_count, [&](const Target_t& target) { return target.player == player; }))
 			continue;
 
-		targets[target_count++] = { player, (origin - eye_position).LengthSqr() };
+		Vector view = Vector(ctx.cmd->pb.base().viewangles().x(), ctx.cmd->pb.base().viewangles().y(), 0.f);
+		Vector delta = origin - eye_position;
+		float dist = delta.Length();
+		float fov = std::hypot(std::remainder(view.x - delta.Normalized().x * 100.f, 360.f), std::remainder(view.y - delta.Normalized().y * 100.f, 360.f));
+
+		targets[target_count++] = { player, dist * dist, fov, -1 };
 	}
 
 	std::sort(targets.begin(), targets.begin() + target_count, [](const Target_t& first, const Target_t& second) {
 		return first.distance_squared < second.distance_squared;
 	});
+
+	CollectTargetsBySlots();
 }
 
 bool CRagebot::ScanRecord(LagRecord* record, ScannedTarget_t* target) {
@@ -1588,7 +1699,7 @@ bool CRagebot::ApplyAutoStop(int tick_offset) {
 	if (movement->m_flMaxspeed() > 0.f)
 		max_speed = std::min(max_speed, movement->m_flMaxspeed());
 
-	float target_speed = max_speed * 0.2f;
+	float target_speed = max_speed * (settings.stop_speed / 100.f);
 	if ((EnginePrediction->m_fFlags & FL_DUCKING) || (ctx.cmd->button_state.held & IN_DUCK))
 		max_speed *= 0.34f;
 
@@ -1801,7 +1912,6 @@ bool CRagebot::WeaponReady(int tick_offset, bool check_revolver, Taia_t* result)
 	} else {
 		get_time(&time, group);
 	}
-
 	auto next = Taia_t(ctx.weapon->m_nNextPrimaryAttackTick(), ctx.weapon->m_flNextPrimaryAttackTickRatio());
 
 	if (time < next)
@@ -2178,4 +2288,223 @@ void CRagebot::Knifebot(CCSGOInput* input) {
 	}
 }
 
+bool CRagebot::RefineShot(ScannedTarget_t* target, CCSGOInput* input) {
+	if (!target || !target->best_point.record || !Config::Get<bool>(Vars::Ragebot::DoubleTap))
+		return false;
+
+	auto record = target->best_point.point;
+	auto angle = target->angle;
+
+	// уточнение по расчёту урона и хитчанса на смещённых точках
+	std::array<Vector, 4> offsets = {{
+		Vector(0.f, 0.f, 0.f),
+		Vector(2.f, 0.f, 0.f),
+		Vector(-2.f, 0.f, 0.f),
+		Vector(0.f, 2.f, 0.f),
+	}};
+
+	float best_dmg = target->best_point.damage;
+	Vector best_pt = record;
+	Vector best_ang = angle;
+
+	for (auto& off : offsets) {
+		Vector pt = record + off;
+		Vector dir = pt - eye_position;
+		float dist = dir.Normalize();
+		if (dist <= 0.f || dist > ctx.weapon_data->m_flRange())
+			continue;
+
+		CAutoWall::Result_t bullet;
+		auto filter = Physics->MakeFilter(ctx.pawn, 0x1C300B, 3, 15);
+		bool hit = AutoWall->Run(eye_position, pt, target->player, bullet, settings.penetrate_walls, ctx.weapon_data->m_flRange(), &filter, &target_damage);
+		if (!hit || bullet.damage < best_dmg)
+			continue;
+
+		best_dmg = bullet.damage;
+		best_pt = pt;
+		best_ang = CalculateAngle(pt - eye_position);
+	}
+
+	target->best_point.point = best_pt;
+	target->best_point.damage = best_dmg;
+	target->angle = best_ang;
+	return true;
+}
+
+void CRagebot::PrepareRefine(ScannedTarget_t* target) {
+	refine_enabled = Config::Get<bool>(Vars::Ragebot::DoubleTap);
+	refine_step = Config::Get<float>(Vars::Ragebot::ReactionTime);
+	if (refine_enabled && target) {
+		refine_point = target->best_point.point;
+		refine_tick = ctx.cmd ? ctx.cmd->command_number : 0;
+	}
+}
+
+void CRagebot::LogShot(int command, int tick, C_CSPlayerPawn* target, const Vector& point, const Vector& angle, float damage, float hitchance, bool hit) {
+	ShotRecord_t rec;
+	rec.command = command;
+	rec.tick = tick;
+	rec.target_handle = target ? target->GetHandle().ToInt() : -1;
+	rec.point = point;
+	rec.angle = angle;
+	rec.damage = damage;
+	rec.hitchance = hitchance;
+	rec.hit = hit;
+	rec.logged = false;
+
+	shot_history.push_back(rec);
+
+	if (hit) {
+		shots_hit++;
+	} else {
+		shots_missed++;
+	}
+	shots_fired++;
+
+	// ограничиваем историю
+	if (shot_history.size() > 256)
+		shot_history.erase(shot_history.begin());
+}
+
+void CRagebot::MarkShotHit(int command) {
+	for (auto it = shot_history.rbegin(); it != shot_history.rend(); ++it) {
+		if (it->command == command && !it->hit) {
+			it->hit = true;
+			shots_hit++;
+			shots_missed--;
+			break;
+		}
+	}
+}
+
+void CRagebot::MarkShotMiss(int command) {
+	for (auto it = shot_history.rbegin(); it != shot_history.rend(); ++it) {
+		if (it->command == command && !it->hit) {
+			it->hit = false;
+			shots_hit--;
+			shots_missed++;
+			break;
+		}
+	}
+}
+
+void CRagebot::DrawShotTelemetry() {
+	if (!Config::Get<bool>(Vars::Ragebot::ShowAimpoints))
+		return;
+
+	ImFont* font = Var->font.inter[0];
+	if (!font)
+		return;
+
+	auto draw = [&](const char* text, ImVec2 pos, ImU32 col) {
+		ImGui::GetForegroundDrawList()->AddText(font, font->LegacySize, pos, col, text);
+	};
+
+	int y = 10;
+	draw(xs("Shots:"), ImVec2(10.f, (float)y), IM_COL32(255, 255, 255, 220));
+	y += 14;
+	draw(xs("Fired: "), ImVec2(20.f, (float)y), IM_COL32(200, 200, 200, 220));
+	draw(std::to_string(shots_fired).c_str(), ImVec2(60.f, (float)y), IM_COL32(255, 255, 255, 255));
+	y += 14;
+	draw(xs("Hit:  "), ImVec2(20.f, (float)y), IM_COL32(100, 255, 100, 220));
+	draw(std::to_string(shots_hit).c_str(), ImVec2(60.f, (float)y), IM_COL32(100, 255, 100, 255));
+	y += 14;
+	draw(xs("Miss: "), ImVec2(20.f, (float)y), IM_COL32(255, 80, 80, 220));
+	draw(std::to_string(shots_missed).c_str(), ImVec2(60.f, (float)y), IM_COL32(255, 80, 80, 255));
+
+	float hc = shots_fired > 0 ? (float)shots_hit / (float)shots_fired * 100.f : 0.f;
+	y += 14;
+	draw(xs("HC:   "), ImVec2(20.f, (float)y), IM_COL32(200, 200, 200, 220));
+	char hc_buf[32];
+	sprintf_s(hc_buf, "%.1f%%", hc);
+	draw(hc_buf, ImVec2(60.f, (float)y), IM_COL32(255, 255, 100, 255));
+}
+
 CRagebot* Ragebot = new CRagebot;
+
+float CRagebot::ResolveYaw(C_CSPlayerPawn* player, const LagRecord* record) {
+	if (!settings.resolver || !player || !record)
+		return record->m_angEyeAngles.y;
+
+	int handle = player->GetHandle().ToInt();
+	auto& state = resolver_states[handle];
+	state.handle = handle;
+	state.update_tick = ctx.cmd ? ctx.cmd->command_number : 0;
+
+	bool moving = record->m_vecVelocity.Length2d() > 5.f;
+	bool airborn = !(record->m_fFlags & FL_ONGROUND);
+	state.moving = moving;
+	state.airborn = airborn;
+
+	float eye_yaw = record->m_angEyeAngles.y;
+	state.last_eye_yaw = eye_yaw;
+
+	// Mode 0: Normal - use eye yaw when moving, last resolved when standing still
+	if (settings.resolver_mode == 0) {
+		if (moving || airborn) {
+			state.resolved_yaw = eye_yaw;
+			state.last_yaw = eye_yaw;
+		} else {
+			state.resolved_yaw = state.last_yaw;
+		}
+	}
+	// Mode 1: Aggressive - always use last known yaw, ignore eye angles
+	else if (settings.resolver_mode == 1) {
+		state.resolved_yaw = state.last_yaw;
+	}
+	// Mode 2: Delta - adjust based on miss history
+	else if (settings.resolver_mode == 2) {
+		if (state.shots_missed > 0) {
+			state.resolved_yaw = Math::NormalizeYaw(state.last_yaw + state.miss_yaw_delta);
+		} else {
+			state.resolved_yaw = eye_yaw;
+		}
+	}
+
+	return state.resolved_yaw;
+}
+
+int CRagebot::GetResolverHitboxPriority(const LagRecord* record, float resolved_yaw) {
+	if (!record)
+		return 0;
+
+	Vector eye_pos = eye_position;
+	Vector head_pos = record->m_vecOrigin + Vector(0.f, 0.f, 64.f);
+	Vector to_head = head_pos - eye_pos;
+	float head_yaw = Math::Rad2Deg(std::atan2(to_head.y, to_head.x));
+
+	float yaw_delta = std::abs(Math::NormalizeYaw(resolved_yaw - head_yaw));
+
+	// Priority 0: Head first (default)
+	if (settings.resolver_hitbox_priority == 0) {
+		if (yaw_delta < settings.resolver_yaw_range * 0.5f)
+			return 0; // head
+		if (yaw_delta < settings.resolver_yaw_range)
+			return 1; // chest
+		return 2; // body
+	}
+	// Priority 1: Chest first
+	else if (settings.resolver_hitbox_priority == 1) {
+		if (yaw_delta < settings.resolver_yaw_range * 0.5f)
+			return 1; // chest
+		if (yaw_delta < settings.resolver_yaw_range)
+			return 0; // head
+		return 2; // body
+	}
+	// Priority 2: Closest to crosshair (body first)
+	else {
+		return 2; // body
+	}
+}
+
+void CRagebot::UpdateResolver(C_CSPlayerPawn* player, const LagRecord* record) {
+	if (!settings.resolver || !player || !record)
+		return;
+
+	int handle = player->GetHandle().ToInt();
+	auto& state = resolver_states[handle];
+
+	state.last_yaw = record->m_angEyeAngles.y;
+}
+
+

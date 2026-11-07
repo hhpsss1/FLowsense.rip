@@ -116,6 +116,7 @@ HRESULT __stdcall Present(IDXGISwapChain* swap_chain, UINT sync_interval, UINT f
 		AntiAim->OnPresent();
 		Movement->OnPresent();
 		Misc->OnPresent();
+		Misc->CrosshairIndicators();
 		Ragebot->OnPresent();
 		World->OnPresent();
 		World->PenetrationCrosshair.OnPresent();

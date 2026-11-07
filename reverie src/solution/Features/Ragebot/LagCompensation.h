@@ -126,6 +126,7 @@ public:
 	LagRecord* GetExtrapolatedRecord(C_CSPlayerPawn* player, int processing_tick);
 	int GetProcessingTick() const;
 	bool ValidRecord(const LagRecord* record, int processing_tick = -1) const;
+	int GetBestBacktrackTick(C_CSPlayerPawn* player, int processing_tick, int max_ticks) const;
 	void Reset();
 };
 

@@ -79,7 +79,7 @@ float C_CSWeaponBase::GetInaccuracy() {
 }
 
 bool C_CSWeaponBase::UpdateAccuracyPenalty() {
-	static auto fn = Memory->Modules.Client.Find(xs("40 57 41 56 48 83 EC 68 48 8B F9 E8 ? ? ? ? 4C 8B F0 48 85 C0")).As<void (__fastcall*)(C_CSWeaponBase*)>();
+	static auto fn = Memory->Modules.Client.Find(xs("40 57 41 56 48 83 EC ?? 48 8B F9 E8 ? ? ? ? 4C 8B F0 48 85 C0")).As<void (__fastcall*)(C_CSWeaponBase*)>();
 	if (!fn)
 		return false;
 

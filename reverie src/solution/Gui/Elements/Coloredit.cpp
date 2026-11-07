@@ -979,7 +979,7 @@ bool CGui::ColorEdit(std::string_view label, Color_t** colors, int color_count, 
 
             Gui->PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
             Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-            Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+            Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
             Gui->PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 12.f));
 
             Gui->PushStyleColor(ImGuiCol_WindowBg, GetPickerBgColor(0.98f));

@@ -101,6 +101,7 @@ namespace Config {
         SerializeGroup(group_name, float, PointScale, 70.f); \
         SerializeGroup(group_name, float, MaximumFov, 180.f); \
         SerializeGroup(group_name, float, MaximumDistance, 0.f); \
+        SerializeGroup(group_name, float, StopSpeed, 50.f); \
         SerializeGroup(group_name, int, TicksPerAimpoint, 4); \
         SerializeGroup(group_name, float, BodyPointScale, 70.f); \
         SerializeGroup(group_name, int, TargetSelection, 0); \
@@ -124,6 +125,11 @@ namespace Config {
         SerializeGroup(group_name, bool, MultipointArms, true); \
         SerializeGroup(group_name, bool, MultipointLegs, true); \
         SerializeGroup(group_name, bool, MultipointFeet, true); \
+        // --- CS2 hitbox resolver ---
+        SerializeGroup(group_name, bool, Resolver, true); \
+        SerializeGroup(group_name, int, ResolverMode, 0); \
+        SerializeGroup(group_name, int, ResolverHitboxPriority, 0); \
+        SerializeGroup(group_name, float, ResolverYawRange, 58.f); \
     }
 
 #define DEFINE_PLAYER_ESP_GROUP(group_name) \
@@ -302,7 +308,24 @@ namespace Vars {
         Serialize(bool, PrepareRevolver, false);
         Serialize(bool, Extrapolation, false);
         Serialize(int, ExtrapolationTicks, 8);
+        Serialize(bool, Prediction, true);
+        Serialize(bool, Backtrack, false);
+        Serialize(int, BacktrackTicks, 12);
+        Serialize(bool, BacktrackPrediction, true);
+        Serialize(int, BacktrackPredictionTicks, 6);
         Serialize(int, TicksPerAimpoint, 4);
+        // --- дополнительные из их конфига ---
+        Serialize(bool, DoubleTap, false);
+        Serialize(float, KillDelay, 0.f);
+        Serialize(float, AimSpeed, 0.f);
+        Serialize(float, ReactionTime, 0.f);
+        Serialize(int, MaxWalls, 2);
+        Serialize(bool, SelfTrack, false);
+        Serialize(int, HitboxMask, 0);
+        Serialize(int, RemoveSpreadMode, 0);
+        Serialize(int, FutureTicks, 0);
+        Serialize(int, DelayShotDamage, 0);
+        Serialize(int, History, 12);
 
         DEFINE_RAGE_WEAPON_GROUP(Global);
         DEFINE_RAGE_WEAPON_GROUP(AutoSniper);
@@ -500,6 +523,11 @@ namespace Vars {
         Serialize(float, PeekAssistMaxDistance, 0.f);
         Serialize(bool, PeekAssistJumpOnRetreat, false);
         SerializeVector(int, PeekAssistTypes, std::vector<int>(peek_assist_types_max, 0));
+        // --- advanced movement exploits ---
+        Serialize(bool, Edgebug, false);
+        Serialize(bool, Texturebug, false);
+        Serialize(bool, Pixelsurf, false);
+        Serialize(bool, Prediction, false);
     }
 
     namespace Grenades {
@@ -530,6 +558,10 @@ namespace Vars {
         Serialize(bool, Indicators, false);
         SerializeVector(int, IndicatorItems, std::vector<int>(8, 0));
         Serialize(int, IndicatorOpacity, 120);
+
+        Serialize(bool, CrosshairIndicators, false);
+        Serialize(Color_t, CrosshairIndicatorsColor, Color_t::White());
+        Serialize(int, CrosshairIndicatorsOpacity, 255);
 
         Serialize(bool, QuickSwitch, false);
         Serialize(bool, BuyBot, false);

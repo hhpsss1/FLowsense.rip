@@ -9,6 +9,7 @@ struct CMisc {
 	void OnPresent();
 	void Watermark();
 	void Indicators();
+	void CrosshairIndicators();
 	inline static bool buy_pending{ true };
 	inline static std::atomic<uint64_t> hitmarker_time{ 0 };
 

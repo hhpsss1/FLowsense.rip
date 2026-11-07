@@ -49,6 +49,7 @@
 
 #include "../Utils/Math/Math.h"
 #include "../Utils/Memory/Memory.h"
+#include "../SDK/Addresses.h"
 #include "../Utils/Fnv1a/Fnv1a.h"
 #include "../Utils/Murmur/Murmur.h"
 

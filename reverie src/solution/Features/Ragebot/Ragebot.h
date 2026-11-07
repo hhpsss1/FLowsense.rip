@@ -366,6 +366,12 @@ struct weapon_settings_t {
 	float minimum_damage = 100.f;
 	float maximum_fov = 180.f;
 	float maximum_distance = 0.f;
+	float stop_speed = 50.f;
+	// resolver
+	bool resolver = true;
+	int resolver_mode = 0;
+	int resolver_hitbox_priority = 0;
+	float resolver_yaw_range = 58.f;
 
 	bool CanPredictStop(bool grounded, float horizontal_speed_squared) const {
 		return (stop_mode & STOP_EARLY) && grounded && horizontal_speed_squared > 64.f;
@@ -417,6 +423,20 @@ private:
 	struct Target_t {
 		C_CSPlayerPawn* player = nullptr;
 		float distance_squared = 0.f;
+		float fov = 0.f;
+		int slot = -1;
+	};
+
+	struct ShotRecord_t {
+		int command = 0;
+		int tick = 0;
+		int target_handle = -1;
+		Vector point;
+		Vector angle;
+		float damage = 0.f;
+		float hitchance = 0.f;
+		bool hit = false;
+		bool logged = false;
 	};
 
 	struct ScanHitbox_t {
@@ -528,6 +548,41 @@ private:
 	float scan_range = 0.f;
 	std::vector<ScanHitbox_t> scan_hitboxes;
 
+	// --- слоты целей (как в их конфиге) ---
+	std::array<Target_t, 3> target_slots{};
+	int target_slot_count = 0;
+
+	// --- уточнение выстрела (refine) ---
+	bool refine_enabled = false;
+	float refine_step = 0.f;
+	Vector refine_point{};
+	int refine_tick = 0;
+
+	// --- телеметрия выстрелов ---
+	std::vector<ShotRecord_t> shot_history;
+	int shots_fired = 0;
+	int shots_hit = 0;
+	int shots_missed = 0;
+
+	// --- CS2 hitbox resolver ---
+	struct ResolverState_t {
+		int handle = -1;
+		float last_yaw = 0.f;
+		float last_eye_yaw = 0.f;
+		float resolved_yaw = 0.f;
+		int shots_fired = 0;
+		int shots_missed = 0;
+		float miss_yaw_delta = 0.f;
+		int update_tick = 0;
+		bool moving = false;
+		bool airborn = false;
+	};
+	std::unordered_map<int, ResolverState_t> resolver_states;
+
+	float ResolveYaw(C_CSPlayerPawn* player, const LagRecord* record);
+	int GetResolverHitboxPriority(const LagRecord* record, float resolved_yaw);
+	void UpdateResolver(C_CSPlayerPawn* player, const LagRecord* record);
+
 	weapon_settings_t GetWeaponSettings(int weapon_id);
 	static Vector CalculateAngle(const Vector& direction);
 	int HitboxGroup(const LagHitbox_t& hitbox) const;
@@ -553,6 +608,21 @@ private:
 	ScannedTarget_t* SelectTarget();
 	void Zeusbot(CCSGOInput* input);
 	void Knifebot(CCSGOInput* input);
+
+	// --- слоты целей ---
+	void ReserveTargets(int count);
+	void InsertTarget(int slot, float score, int index);
+	void CollectTargetsBySlots();
+
+	// --- уточнение выстрела ---
+	bool RefineShot(ScannedTarget_t* target, CCSGOInput* input);
+	void PrepareRefine(ScannedTarget_t* target);
+
+	// --- телеметрия выстрелов ---
+	void LogShot(int command, int tick, C_CSPlayerPawn* target, const Vector& point, const Vector& angle, float damage, float hitchance, bool hit);
+	void MarkShotHit(int command);
+	void MarkShotMiss(int command);
+	void DrawShotTelemetry();
 
 	bool CanAutoStop(int tick_offset = 0) const;
 	bool AutoStop(ScannedTarget_t* target, bool prediction = false);

@@ -39,20 +39,20 @@ struct CVariables {
 
 	struct {
 		ImGuiWindowFlags flags{ ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground };
-		ImVec2 size{ 800.f, 700.f };
+		ImVec2 size{ 760.f, 560.f };
 
 		ImVec2 padding{ 0, 0 };
 		ImVec2 spacing{ 0, 0 };
 		float scroll_size{ 4.f };
 		float shadow_size{ 0.f };
-		float border_size{ 0.f };
-		float rounding{ 16.f };
-		ImU32 outline_col{ IM_COL32(58, 59, 59, 255) };
+		float border_size{ 1.f };
+		float rounding{ 0.f };
+		ImU32 outline_col{ IM_COL32(60, 60, 60, 255) };
 	} window;
 
 	struct {
-		float sidebar_width{ 160.f };
-		float header_height{ 50.f };
+		float sidebar_width{ 140.f };
+		float header_height{ 28.f };
 
 		int active_tab_id{ 2 };
 		int hotkeys_tab_id{ 6 };

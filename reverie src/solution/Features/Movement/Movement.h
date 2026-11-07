@@ -63,6 +63,18 @@ public:
 	void LegMovement(CUserCommand* cmd, bool prediction = false);
 	void RestoreLegMovement(CUserCommand* cmd);
 	void Rotation();
+
+	// --- advanced movement exploits ---
+	void Edgebug(CUserCommand* cmd);
+	void Texturebug(CUserCommand* cmd);
+	void Pixelsurf(CUserCommand* cmd);
+	void MovementPrediction(CUserCommand* cmd);
+
+	bool m_bEdgebugActive = false;
+	bool m_bTexturebugActive = false;
+	bool m_bPixelsurfActive = false;
+	float m_flLastFallStart = 0.f;
+	Vector m_vecFallStart{};
 };
 
 extern CMovement* Movement;

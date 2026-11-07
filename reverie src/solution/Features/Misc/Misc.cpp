@@ -146,7 +146,7 @@ void CMisc::Watermark() {
 
 	const bool ingame = EngineClient && EngineClient->InGame();
 
-	std::string text1 = "reverie";
+	std::string text1 = "CustomFlow";
 	std::string suffix = "";
 
 	if (Config::Get<bool>(Vars::Misc::WatermarkFps))
@@ -208,6 +208,49 @@ void CMisc::Watermark() {
 
 	if (!suffix.empty()) {
 		draw_list->AddText(font, font_size, ImVec2(current_x, pos_y), IM_COL32(255, 255, 255, 255), suffix.c_str());
+	}
+}
+
+void CMisc::CrosshairIndicators() {
+	if (!Config::Get<bool>(Vars::Misc::CrosshairIndicators) || !EngineClient || !EngineClient->InGame())
+		return;
+
+	if (!ctx.pawn || !ctx.pawn->Alive())
+		return;
+
+	auto draw_list = ImGui::GetBackgroundDrawList();
+	if (!draw_list)
+		return;
+
+	ImGuiIO& io = ImGui::GetIO();
+	ImFont* text_font = (Var && Var->font.indicator_text) ? Var->font.indicator_text :
+	                   ((Var && Var->font.inter[1]) ? Var->font.inter[1] :
+	                   ((Var && Var->font.inter[0]) ? Var->font.inter[0] : ImGui::GetFont()));
+
+	Color_t accent = Config::Get<Color_t>(Vars::Misc::CrosshairIndicatorsColor);
+	int opacity = std::clamp(Config::Get<int>(Vars::Misc::CrosshairIndicatorsOpacity), 0, 255);
+
+	float cx = io.DisplaySize.x * 0.5f;
+	float cy = io.DisplaySize.y * 0.5f;
+
+	std::vector<std::pair<std::string, bool>> states;
+	states.push_back({ xs("DT"), Config::Get<bool>(Vars::Ragebot::Enable) });
+	states.push_back({ xs("HS"), Config::Get<bool>(Vars::Antiaim::Enable) });
+	states.push_back({ xs("BAIM"), Config::Get<bool>(Vars::Ragebot::Global::ForceBodyAim) });
+	states.push_back({ xs("HC"), Config::Get<bool>(Vars::Ragebot::Enable) });
+	states.push_back({ xs("DMG"), Config::Get<bool>(Vars::Ragebot::Enable) });
+
+	float x = cx + 20.f;
+	float y = cy - 10.f;
+	float spacing = 16.f;
+
+	for (auto& s : states) {
+		if (!s.second)
+			continue;
+
+		ImU32 col = IM_COL32(accent.R(), accent.G(), accent.B(), opacity);
+		draw_list->AddText(text_font, text_font ? text_font->LegacySize : 14.f, ImVec2(x, y), col, s.first.c_str());
+		y += spacing;
 	}
 }
 

@@ -226,7 +226,7 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
 
     const ImVec2 track_min(track_x0, track_y - track_h * 0.5f);
     const ImVec2 track_max(track_x1, track_y + track_h * 0.5f);
-    const float  track_rnd = track_h * 0.5f;
+    const float  track_rnd = 0.f;
 
     {
         const float track_alpha = 1.f - state->edit_alpha * 0.85f;
@@ -478,7 +478,7 @@ bool CGui::SliderTrack(const char* str_id, const ImVec2 & bb_min, const ImVec2 &
 
     const ImVec2 track_min(track_x0, track_y - track_h * 0.5f);
     const ImVec2 track_max(track_x1, track_y + track_h * 0.5f);
-    const float track_rnd = track_h * 0.5f;
+    const float track_rnd = 0.f;
 
     {
         const float track_alpha = (1.f - state->edit_alpha * 0.85f) * alpha;

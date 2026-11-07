@@ -94,7 +94,7 @@ void CGui::Render() {
             return;
 
         if (s_widget_watermark) {
-            std::string text = xs("customflow");
+            std::string text = xs("CustomFlow");
             if (s_watermark_username)
                 text += xs("  |  user");
             if (s_watermark_ping)
@@ -228,24 +228,22 @@ void CGui::Render() {
             }
         }
 
-        Blur::DrawBackgroundBlur(dl, Device, DeviceCtx, style->WindowRounding);
+        // Oldschool flat look: no blur, no bloom, sharp corners, thin border
+        dl->AddRectFilled(pos, pos + size, IM_COL32(18, 18, 18, static_cast<int>(255.f * window_ease)), 0.f);
+        dl->AddRectFilled(pos, ImVec2(pos.x + sidebar_w, pos.y + size.y), IM_COL32(22, 22, 22, static_cast<int>(255.f * window_ease)), 0.f);
+        DrawOutline(dl, pos, pos + size, 0.f, window_ease);
 
-        dl->AddRectFilled(pos, pos + size, IM_COL32(13, 14, 14, static_cast<int>(248.f * window_ease)), style->WindowRounding);
-        dl->AddRectFilled(pos, ImVec2(pos.x + sidebar_w, pos.y + size.y), IM_COL32(17, 18, 18, static_cast<int>(235.f * window_ease)), style->WindowRounding, ImDrawFlags_RoundCornersLeft);
-        DrawOutline(dl, pos, pos + size, style->WindowRounding, window_ease);
-
-        if (font_logo) {
-            const char* brand = xs("customflow");
-            ImVec2 logo_sz = font_logo->CalcTextSizeA(font_logo->LegacySize, FLT_MAX, -1.f, brand);
-            ImVec2 lp = ImVec2(pos.x + (sidebar_w - logo_sz.x) * 0.5f, pos.y + 18.f);
-            dl->AddText(font_logo, font_logo->LegacySize, lp, Draw->GetClr(Colors->accent, window_ease), brand);
+        // Oldschool: brand text top-left, small, accent color
+        if (font_regular) {
+            const char* brand = xs("CustomFlow");
+            dl->AddText(font_regular, font_regular->LegacySize, ImVec2(pos.x + 12.f, pos.y + 10.f), Draw->GetClr(Colors->accent, window_ease), brand);
         }
 
-        const float top_sep_y = pos.y + 54.f;
-        dl->AddLine(ImVec2(pos.x + 14.f, top_sep_y), ImVec2(pos.x + sidebar_w - 14.f, top_sep_y), IM_COL32(36, 37, 38, static_cast<int>(255.f * window_ease)), 1.f);
+        const float top_sep_y = pos.y + 30.f;
+        dl->AddLine(ImVec2(pos.x, top_sep_y), ImVec2(pos.x + sidebar_w, top_sep_y), IM_COL32(40, 40, 40, static_cast<int>(255.f * window_ease)), 1.f);
 
-        float side_y = top_sep_y + 14.f;
-        const float tab_pad_x = 10.f;
+        float side_y = top_sep_y + 8.f;
+        const float tab_pad_x = 6.f;
         const float tab_w = sidebar_w - (tab_pad_x * 2.f);
 
         ImGui::BeginDisabled(about_blocking);
@@ -276,9 +274,12 @@ void CGui::Render() {
                 ta->select = ImClamp(ta->select + this->FixedSpeed(14.f) * (is_tab_sel ? 1.f : -1.f), 0.f, 1.f);
                 ta->expand = ImClamp(ta->expand + this->FixedSpeed(14.f) * (is_tab_sel ? 1.f : -1.f), 0.f, 1.f);
 
-                if (ta->select > 0.01f || ta->hover > 0.01f) {
-                    float bg_a = (ta->select * 0.16f + ta->hover * 0.06f) * window_ease;
-                    Draw->RectFilled(dl, t_min, t_max, Draw->GetClr(Colors->accent, bg_a), 6.f);
+                if (ta->select > 0.01f) {
+                    // Oldschool: solid accent bar on left, no rounded bg
+                    dl->AddRectFilled(t_min, ImVec2(t_min.x + 3.f, t_max.y), Draw->GetClr(Colors->accent, window_ease), 0.f);
+                }
+                if (ta->hover > 0.01f && !is_tab_sel) {
+                    dl->AddRectFilled(t_min, t_max, Draw->GetClr(Colors->text, 0.04f * ta->hover * window_ease), 0.f);
                 }
 
                 const float alpha_factor = ImLerp(0.40f, 1.0f, ImMax(ta->select, ta->hover * 0.7f));
@@ -368,22 +369,22 @@ void CGui::Render() {
             side_y += 8.f;
         }
 
-        const float bot_sep_y = pos.y + size.y - 62.f;
+        const float bot_sep_y = pos.y + size.y - 46.f;
         dl->AddLine(ImVec2(pos.x + 14.f, bot_sep_y), ImVec2(pos.x + sidebar_w - 14.f, bot_sep_y), IM_COL32(36, 37, 38, static_cast<int>(255.f * window_ease)), 1.f);
 
         const float profile_y = bot_sep_y + 12.f;
-        const float av_r = 15.f;
-        const ImVec2 av_center(pos.x + 16.f + av_r, profile_y + av_r);
+        const float av_sz = 26.f;
+        const ImVec2 av_min(pos.x + 12.f, profile_y);
 
-        dl->AddCircleFilled(av_center, av_r, IM_COL32(38, 40, 44, static_cast<int>(255.f * window_ease)), 32);
-        dl->AddCircle(av_center, av_r, IM_COL32(58, 60, 66, static_cast<int>(255.f * window_ease)), 32, 1.f);
+        dl->AddRectFilled(av_min, av_min + ImVec2(av_sz, av_sz), IM_COL32(38, 40, 44, static_cast<int>(255.f * window_ease)), 0.f);
+        Draw->Rect(dl, av_min, av_min + ImVec2(av_sz, av_sz), IM_COL32(58, 60, 66, static_cast<int>(255.f * window_ease)), 0.f, 0, 1.f);
 
-        const float uname_x = av_center.x + av_r + 10.f;
-        dl->AddText(font_regular, font_regular->LegacySize, ImVec2(uname_x, av_center.y - 12.f), Draw->GetClr(Colors->text, window_ease), xs("Guest"));
-        dl->AddText(font_sub, font_sub->LegacySize, ImVec2(uname_x, av_center.y + 2.f), Draw->GetClr(Colors->text_secondary, 0.65f * window_ease), xs("Lifetime"));
+        const float uname_x = av_min.x + av_sz + 10.f;
+        dl->AddText(font_regular, font_regular->LegacySize, ImVec2(uname_x, profile_y + 4.f), Draw->GetClr(Colors->text, window_ease), xs("Guest"));
+        dl->AddText(font_sub, font_sub->LegacySize, ImVec2(uname_x, profile_y + 18.f), Draw->GetClr(Colors->text_secondary, 0.65f * window_ease), xs("Lifetime"));
 
         const float dot_btn_sz = 20.f;
-        const ImVec2 dots_min(pos.x + sidebar_w - 16.f - dot_btn_sz, av_center.y - dot_btn_sz * 0.5f);
+        const ImVec2 dots_min(pos.x + sidebar_w - 16.f - dot_btn_sz, profile_y + av_sz * 0.5f - dot_btn_sz * 0.5f);
 
         ImGui::SetCursorScreenPos(dots_min);
         ImGui::InvisibleButton(xs("##side_profile_dots"), ImVec2(dot_btn_sz, dot_btn_sz));
@@ -397,16 +398,16 @@ void CGui::Render() {
             dl->AddText(icon_font, icon_font->LegacySize, dp, Draw->GetClr(dots_hover ? Colors->text : Colors->text_secondary, (dots_hover ? 1.0f : 0.45f) * window_ease), ICON_FA_ELLIPSIS_VERTICAL);
         }
 
-        const float top_btn_sz = 26.f;
-        const float top_btn_y = pos.y + 20.f;
-        float header_cur_x = pos.x + size.x - 24.f;
+        const float top_btn_sz = 22.f;
+        const float top_btn_y = pos.y + 6.f;
+        float header_cur_x = pos.x + size.x - 22.f;
 
         header_cur_x -= top_btn_sz;
         ImVec2 lua_btn_min(header_cur_x, top_btn_y);
         ImVec2 lua_btn_max(lua_btn_min.x + top_btn_sz, lua_btn_min.y + top_btn_sz);
 
-        Draw->RectFilled(dl, lua_btn_min, lua_btn_max, Draw->GetClr(Colors->button.background, 0.4f * window_ease), 6.f);
-        DrawOutline(dl, lua_btn_min, lua_btn_max, 6.f, window_ease);
+        Draw->RectFilled(dl, lua_btn_min, lua_btn_max, Draw->GetClr(Colors->button.background, 0.4f * window_ease), 0.f);
+        DrawOutline(dl, lua_btn_min, lua_btn_max, 0.f, window_ease);
         if (icon_font) {
             ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, ICON_FA_CODE);
             dl->AddText(icon_font, icon_font->LegacySize, lua_btn_min + (ImVec2(top_btn_sz, top_btn_sz) - isz) * 0.5f, Draw->GetClr(Colors->text_secondary, 0.35f * window_ease), ICON_FA_CODE);
@@ -424,8 +425,8 @@ void CGui::Render() {
 
         const bool cfg_popup_open = ImGui::IsPopupOpen(xs("##presets_popup"));
 
-        Draw->RectFilled(dl, cfg_btn_min, cfg_btn_max, Draw->GetClr(cfg_btn_hov || cfg_popup_open ? Colors->listbox.hovered : Colors->button.background, window_ease), 6.f);
-        DrawOutline(dl, cfg_btn_min, cfg_btn_max, 6.f, window_ease);
+        Draw->RectFilled(dl, cfg_btn_min, cfg_btn_max, Draw->GetClr(cfg_btn_hov || cfg_popup_open ? Colors->listbox.hovered : Colors->button.background, window_ease), 0.f);
+        DrawOutline(dl, cfg_btn_min, cfg_btn_max, 0.f, window_ease);
 
         if (icon_font) {
             ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, ICON_FA_FOLDER);
@@ -446,8 +447,8 @@ void CGui::Render() {
         }
 
         if (cur_active_tab && !cur_active_tab->subtabs.empty()) {
-            float h_sub_x = pos.x + sidebar_w + 16.f;
-            const float h_sub_y = pos.y + 24.f;
+            float h_sub_x = pos.x + sidebar_w + 10.f;
+            const float h_sub_y = pos.y + 8.f;
 
             for (size_t s = 0; s < cur_active_tab->subtabs.size(); ++s) {
                 const auto& sub = cur_active_tab->subtabs[s];
@@ -492,7 +493,7 @@ void CGui::Render() {
         const float cfg_row_h = 36.f;
         const float cfg_popup_w = 250.f;
         const float cfg_input_h = 26.f;
-        const float cfg_rounding = 12.f;
+        const float cfg_rounding = 0.f;
         const float cfg_list_h = ImMin(static_cast<float>(cfg_items.size()) * (cfg_row_h + 4.f), 220.f);
         const float cfg_popup_h = cfg_input_h + 10.f + cfg_list_h + 8.f;
 
@@ -694,8 +695,8 @@ void CGui::Render() {
         if (content_alpha > 0.01f) {
             this->PushStyleVar(ImGuiStyleVar_Alpha, content_alpha);
 
-            ImGui::SetCursorScreenPos(ImVec2(pos.x + sidebar_w + 4.f, pos.y + 62.f));
-            ImGui::PushClipRect(ImVec2(pos.x + sidebar_w, pos.y + 56.f), ImVec2(pos.x + size.x, pos.y + size.y - 12.f), true);
+            ImGui::SetCursorScreenPos(ImVec2(pos.x + sidebar_w + 8.f, pos.y + 32.f));
+            ImGui::PushClipRect(ImVec2(pos.x + sidebar_w, pos.y + 28.f), ImVec2(pos.x + size.x, pos.y + size.y - 4.f), true);
 
             this->BeginContent();
 
@@ -720,7 +721,7 @@ void CGui::Render() {
         if (this->about_active) {
             const float about_w = 330.f;
             const float about_h = s_about_content_h;
-            const float about_rounding = 14.f;
+            const float about_rounding = 0.f;
             const float pad = 16.f;
 
             ImVec2 about_min(pos.x + (size.x - about_w) * 0.5f, pos.y + (size.y - about_h) * 0.5f);
@@ -750,7 +751,7 @@ void CGui::Render() {
 
                 ImFont* title_font = Var->font.inter[1] ? Var->font.inter[1] : (font_logo ? font_logo : font_bold);
                 if (title_font)
-                    adl->AddText(title_font, 19.f, ImVec2(content_left, apos.y + 14.f), Draw->GetClr(Colors->accent, about_ease), xs("customflow"));
+                    adl->AddText(title_font, 19.f, ImVec2(content_left, apos.y + 14.f), Draw->GetClr(Colors->accent, about_ease), xs("CustomFlow"));
 
                 const float close_sz = 26.f;
                 ImVec2 close_min(content_right - close_sz, apos.y + 12.f);
@@ -762,7 +763,7 @@ void CGui::Render() {
                 if (ImGui::IsItemClicked())
                     s_about_open = false;
 
-                adl->AddRectFilled(close_min, close_max, IM_COL32(26, 28, 32, static_cast<int>((close_hov ? 255.f : 160.f) * about_ease)), 6.f);
+                adl->AddRectFilled(close_min, close_max, IM_COL32(26, 28, 32, static_cast<int>((close_hov ? 255.f : 160.f) * about_ease)), 0.f);
                 if (icon_font) {
                     ImVec2 isz = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, ICON_FA_XMARK);
                     adl->AddText(icon_font, icon_font->LegacySize, close_min + (ImVec2(close_sz, close_sz) - isz) * 0.5f, Draw->GetClr(close_hov ? Colors->text : Colors->text_secondary, about_ease), ICON_FA_XMARK);
@@ -773,7 +774,7 @@ void CGui::Render() {
                 const float card_h = 83.f;
                 const ImVec2 card_min(apos.x + (asize.x - card_w) * 0.5f, card_y);
                 const ImVec2 card_max(card_min.x + card_w, card_min.y + card_h);
-                adl->AddRectFilled(card_min, card_max, IM_COL32(20, 21, 23, static_cast<int>(230.f * about_ease)), 10.f);
+                adl->AddRectFilled(card_min, card_max, IM_COL32(20, 21, 23, static_cast<int>(230.f * about_ease)), 0.f);
 
                 if (font_regular && font_sub) {
                     const float r1_y = card_min.y + 18.f;

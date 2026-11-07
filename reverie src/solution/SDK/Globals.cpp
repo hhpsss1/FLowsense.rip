@@ -114,6 +114,7 @@ void Entry_t::Fill(HMODULE m) {
 	Logger->Attach(xs("Reverie Reborn (skinvvvalker rework)"));
 
 	Memory->Modules.Fill();
+	Patterns::Initialize();
 	Valve.Fill();
 	ThreadPool->Init();
 	Input->Init();

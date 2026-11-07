@@ -48,14 +48,14 @@ struct CElements {
 	} dropdown;
 
 	struct {
-		float height{ 35 };
-		float rounding{ 4 };
-		float padding{ 15 };
+		float height{ 22 };
+		float rounding{ 0 };
+		float padding{ 8 };
 	} text_field;
 
 	struct {
-		float height{ 35 };
-		float rounding{ 4 };
+		float height{ 24 };
+		float rounding{ 0 };
 	} button;
 
 	struct {
