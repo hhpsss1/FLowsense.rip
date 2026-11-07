@@ -10,6 +10,7 @@
 #include "../Settings/Functions.h"
 #include "../Data/FontsAwesome.h"
 #include "../Data/PixelFont.h"
+#include "../Data/FsTahomaFont.h"
 
 #include <d2d1_1.h>
 #pragma comment(lib, "d2d1.lib")
@@ -1044,12 +1045,20 @@ void CDraw::InitFonts() {
     cfg2.RasterizerMultiply = 1.f;
     cfg2.FontLoaderFlags = ImGuiFreeTypeBuilderFlags_NoAutoHint;
 
-    Var->font.inter[0] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeui.ttf"), 16.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
-    Var->font.inter[1] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\seguisb.ttf"), 18.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
-    Var->font.inter[2] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeui.ttf"), 18.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
-    Var->font.inter[3] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeuib.ttf"), 30.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
-    Var->font.inter[4] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeuib.ttf"), 22.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
-    Var->font.inter[5] = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeui.ttf"), 16.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
+    ImFontConfig cfg_px;
+    cfg_px.PixelSnapH = true;
+    cfg_px.OversampleH = 1;
+    cfg_px.OversampleV = 1;
+    cfg_px.RasterizerDensity = 1.f;
+    cfg_px.FontDataOwnedByAtlas = false;
+    cfg_px.FontLoaderFlags = ImGuiFreeTypeBuilderFlags_Monochrome | ImGuiFreeTypeBuilderFlags_MonoHinting;
+
+    Var->font.inter[0] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 13.f, &cfg_px);
+    Var->font.inter[1] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 13.f, &cfg_px);
+    Var->font.inter[2] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 13.f, &cfg_px);
+    Var->font.inter[3] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 15.f, &cfg_px);
+    Var->font.inter[4] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 13.f, &cfg_px);
+    Var->font.inter[5] = io.Fonts->AddFontFromMemoryTTF(const_cast<unsigned char*>(fs_tahoma_data), (int)fs_tahoma_size, 13.f, &cfg_px);
 
     Var->font.indicator_text = io.Fonts->AddFontFromFileTTF(xs("C:\\Windows\\Fonts\\segoeui.ttf"), 18.f, &cfg2, io.Fonts->GetGlyphRangesCyrillic());
     Var->font.indicator_icon = io.Fonts->AddFontFromMemoryCompressedTTF(FA_FONT, FA_compressed_size, 16.f, &icon_cfg, icon_ranges);

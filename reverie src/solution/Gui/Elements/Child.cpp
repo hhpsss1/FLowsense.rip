@@ -49,27 +49,17 @@ bool BeginChildEx(const char* name, ImGuiID id, const ImVec2& size_arg, ImGuiChi
 
     ImVec2 size = size_arg;
     if (size.x <= 0)
-        size.x = (GetWindowWidth() - Elements->content.spacing.x - Elements->content.padding.x * 2) / 2.f;
+        size.x = 211.f;
     if (size.y <= 0)
         size.y = *state;
 
-    ImFont* icon_font = Var->font.fa[0];
     ImFont* title_font = Var->font.inter[1] ? Var->font.inter[1] : Var->font.inter[0];
-
-    const float label_padding_x = 4.0f;
-    const float label_offset_y_geom = 1.0f;
-    const float label_offset_y_draw = -1.0f;
-
-    float label_height = title_font->LegacySize + label_offset_y_geom * 2.0f;
-    if (icon_font && icon_font->LegacySize + label_offset_y_geom * 2.0f > label_height)
-        label_height = icon_font->LegacySize + label_offset_y_geom * 2.0f;
-
-    const float header_gap = 3.0f;
-    const float header_total = label_height + header_gap;
+    const float label_padding_x = 10.0f;
+    const float header_top = 5.0f;
+    const float header_total = header_top;
 
     ImVec2 label_min = parent_window->DC.CursorPos;
-    ImVec2 label_max = label_min + ImVec2(size.x, label_height);
-    ImVec2 card_pos = ImVec2(label_min.x, label_max.y + header_gap);
+    ImVec2 card_pos = ImVec2(label_min.x, label_min.y + header_top);
 
     Gui->SetNextWindowSize(size);
     Gui->SetNextWindowPos(card_pos);
@@ -83,19 +73,23 @@ bool BeginChildEx(const char* name, ImGuiID id, const ImVec2& size_arg, ImGuiChi
     g.Style.ChildRounding = 0.f;
 
     const float a = g.Style.Alpha;
-    Draw->RectFilled(parent_window->DrawList, card_pos, card_pos + size, Draw->GetClr(Colors->child.background.Value, 1.f), 0.f, ImDrawFlags_RoundCornersAll);
-    Draw->Rect(parent_window->DrawList, card_pos, card_pos + size, Var->window.outline_col, 0.f, 0, 1.f);
+    const ImVec2 box_min = card_pos;
+    const ImVec2 box_max(label_min.x + size.x + 1.f, card_pos.y + size.y + 1.f);
+    const char* title = name ? name : "";
+    const float title_x = label_min.x + label_padding_x;
+    const float title_w = title_font->CalcTextSizeA(title_font->LegacySize, FLT_MAX, -1.f, title).x;
 
-    float text_x = label_padding_x;
+    ImDrawList* pdl = parent_window->DrawList;
+    pdl->AddRectFilled(box_min + ImVec2(1.f, 1.f), box_max, OtcStyle::GroupFace(a));
+    pdl->AddRectFilled(box_min, ImVec2(title_x - 2.f, box_min.y + 1.f), OtcStyle::GroupLine(a));
+    pdl->AddRectFilled(ImVec2(title_x + title_w + 2.f, box_min.y), ImVec2(box_max.x + 1.f, box_min.y + 1.f), OtcStyle::GroupLine(a));
+    pdl->AddRectFilled(box_min, ImVec2(box_min.x + 1.f, box_max.y + 1.f), OtcStyle::GroupLine(a));
+    pdl->AddRectFilled(ImVec2(box_max.x, box_min.y), ImVec2(box_max.x + 1.f, box_max.y + 1.f), OtcStyle::GroupLine(a));
+    pdl->AddRectFilled(ImVec2(box_max.x + 1.f, box_min.y), ImVec2(box_max.x + 2.f, box_max.y + 1.f), OtcStyle::Border(a));
+    pdl->AddRectFilled(ImVec2(box_min.x, box_max.y), ImVec2(box_max.x + 1.f, box_max.y + 1.f), OtcStyle::GroupLine(a));
+    pdl->AddRectFilled(ImVec2(box_min.x, box_max.y + 1.f), ImVec2(box_max.x + 2.f, box_max.y + 2.f), OtcStyle::Border(a));
 
-    if (fa_icon && fa_icon[0] != '\0' && icon_font) {
-        float icon_x = label_padding_x;
-        Draw->TextClipped(parent_window->DrawList, icon_font, label_min + ImVec2(icon_x, label_offset_y_draw), label_max, Draw->GetClr(Colors->accent, a), fa_icon, NULL, NULL, ImVec2(0.f, 0.0f));
-        float icon_width = icon_font->CalcTextSizeA(icon_font->LegacySize, FLT_MAX, -1.f, fa_icon).x;
-        text_x += icon_width + 4.f;
-    }
-
-    Draw->TextClipped(parent_window->DrawList, title_font, label_min + ImVec2(text_x, label_offset_y_draw), label_max, Draw->GetClr(Colors->child.name, a), name ? name : "", NULL, NULL, ImVec2(0.f, 0.0f));
+    pdl->AddText(title_font, title_font->LegacySize, ImVec2(title_x, ImFloor(box_min.y - title_font->LegacySize * 0.5f + 1.f)), OtcStyle::Text(a), title);
 
     const bool ret = Gui->Begin(temp_window_name, NULL, window_flags);
 
@@ -156,16 +150,7 @@ void CGui::EndChild() {
     if (child_window->BeginCount == 1) {
         ImGuiWindow* parent_window = g.CurrentWindow;
 
-        ImFont* icon_font = Var->font.fa[0];
-        ImFont* title_font = Var->font.inter[1];
-
-        const float label_offset_y_geom = 1.0f;
-        float label_height = title_font->LegacySize + label_offset_y_geom * 2.0f;
-        if (icon_font && icon_font->LegacySize + label_offset_y_geom * 2.0f > label_height)
-            label_height = icon_font->LegacySize + label_offset_y_geom * 2.0f;
-
-        const float header_gap = 3.0f;
-        const float header_total = label_height + header_gap;
+        const float header_total = 5.0f;
 
         ImVec2 full_size = child_size + ImVec2(0.f, header_total);
         ImRect bb(parent_window->DC.CursorPos, parent_window->DC.CursorPos + full_size);

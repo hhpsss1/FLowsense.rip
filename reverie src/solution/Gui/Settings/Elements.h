@@ -4,13 +4,13 @@
 
 struct CElements {
 	struct {
-		ImVec2 padding{ 20, 18 };
-		ImVec2 spacing{ 12, 12 };
+		ImVec2 padding{ 19, 3 };
+		ImVec2 spacing{ 19, 10 };
 	} content;
 
 	struct {
-		ImVec2 padding{ 12, 12 };
-		ImVec2 spacing{ 0, 7 };
+		ImVec2 padding{ 10, 10 };
+		ImVec2 spacing{ 0, 0 };
 		float titlebar_height{ 50 };
 		float name_padding{ 20 };
 	} child;

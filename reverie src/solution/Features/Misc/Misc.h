@@ -8,6 +8,8 @@ struct CMisc {
 	void BuyBot();
 	void OnPresent();
 	void Watermark();
+	void BindsList();
+	void Spectators();
 	void Indicators();
 	void CrosshairIndicators();
 	inline static bool buy_pending{ true };

@@ -8,11 +8,10 @@ extern void RenderGearPopupFn(ImDrawList* dl, const ImRect& gear_bb, const char*
 
 static ImGuiID s_open_combo_id = 0;
 
-static const ImU32 k_dd_box_bg = IM_COL32(29, 31, 32, 250);
-static const ImU32 k_dd_box_bg_hov = IM_COL32(36, 38, 40, 250);
-static const ImU32 k_dd_item_sel = IM_COL32(48, 50, 56, 255);
-static const ImU32 k_dd_text_grey = IM_COL32(150, 150, 154, 255);
-static const ImU32 k_dd_text_white = IM_COL32(232, 232, 235, 255);
+static const ImU32 k_dd_popup_bg = IM_COL32(36, 36, 36, 255);
+static const ImU32 k_dd_popup_border = IM_COL32(0, 0, 0, 255);
+static const ImU32 k_dd_scroll_bg = IM_COL32(30, 30, 30, 255);
+static const ImU32 k_dd_scroll_grab = IM_COL32(80, 80, 80, 255);
 
 struct dropdown_state {
     float alpha{ 0.f };
@@ -22,55 +21,6 @@ struct dropdown_state {
     bool need_focus{ false };
     int last_frame{ 0 };
 };
-
-static void RenderCheckmark(ImDrawList* dl, ImVec2 center, float anim, ImU32 col) {
-    if (anim <= 0.005f)
-        return;
-
-    const float thick = 1.8f;
-    const ImVec2 p0 = ImVec2(center.x - 3.8f, center.y);
-    const ImVec2 p1 = ImVec2(center.x - 1.4f, center.y + 2.4f);
-    const ImVec2 p2 = ImVec2(center.x + 3.8f, center.y - 2.8f);
-
-    const float split = 0.32f;
-    const float t = ImClamp(anim, 0.f, 1.f);
-
-    if (t <= split) {
-        float seg_t = t / split;
-        ImVec2 cur = ImLerp(p0, p1, seg_t);
-        dl->AddLine(p0, cur, col, thick);
-        dl->AddCircleFilled(p0, thick * 0.5f, col, 8);
-        dl->AddCircleFilled(cur, thick * 0.5f, col, 8);
-    } else {
-        float seg_t = (t - split) / (1.f - split);
-        ImVec2 cur = ImLerp(p1, p2, seg_t);
-        ImVec2 pts[3] = { p0, p1, cur };
-        dl->AddPolyline(pts, 3, col, 0, thick);
-        dl->AddCircleFilled(p0, thick * 0.5f, col, 8);
-        dl->AddCircleFilled(p1, thick * 0.5f, col, 8);
-        dl->AddCircleFilled(cur, thick * 0.5f, col, 8);
-    }
-}
-
-static void draw_box_shadow(ImDrawList* dl, ImVec2 min, ImVec2 max, float rounding, float alpha_mult) {
-    if (alpha_mult <= 0.01f)
-        return;
-
-    const float base_a = 158.f * alpha_mult;
-    const int steps = 8;
-    const float blur = 22.f;
-    const ImVec2 offset(0.f, 8.f);
-
-    for (int i = 0; i < steps; ++i) {
-        float factor = static_cast<float>(i + 1) / static_cast<float>(steps);
-        float cur_spread = blur * factor;
-        float a = (base_a / static_cast<float>(steps)) * (1.0f - factor * 0.4f);
-        ImU32 shadow_col = IM_COL32(0, 0, 0, static_cast<int>(a));
-        ImVec2 s_min(min.x + offset.x - cur_spread * 0.5f, min.y + offset.y - cur_spread * 0.5f);
-        ImVec2 s_max(max.x + offset.x + cur_spread * 0.5f, max.y + offset.y + cur_spread * 0.5f);
-        dl->AddRectFilled(s_min, s_max, shadow_col, rounding + cur_spread * 0.35f);
-    }
-}
 
 static bool is_any_picker_open_or_hovered() {
     ImGuiContext& g = *GImGui;
@@ -107,52 +57,27 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
     }
 
     const float avail = GetContentRegionAvail().x;
-    const float row_h = 26.f;
-    const float box_h = 26.f;
+    const bool has_label = (label && label[0] && label[0] != '#');
+    const float row_h = has_label ? 40.f : 25.f;
+    const float box_h = 20.f;
 
     ImFont* font = Var->font.inter[0];
-    ImFont* icon_font = Var->font.fa[0];
 
     const float text_pad = 10.f;
     const float icon_pad = 10.f;
     const float icon_w = 10.f;
 
-    const float pad_x = 7.f;
-    const float pad_y = 7.f;
+    const float pad_x = 4.f;
+    const float pad_y = 4.f;
 
-    const bool has_label = (label && label[0] && label[0] != '#');
-
-    float max_text_w = 0.f;
-    if (font) {
-        for (auto& it : items) {
-            ImVec2 sz = font->CalcTextSizeA(font->LegacySize, FLT_MAX, -1.f, it.c_str());
-            max_text_w = ImMax(max_text_w, sz.x);
-        }
-    }
-
-    const float item_left_pad = 10.f;
-    const float item_right_reserve = 30.f;
-    const float needed_w = max_text_w + item_left_pad + item_right_reserve + pad_x * 2.f;
-    const float default_min_w = ImMin(145.f, avail * 0.48f);
-
-    float total_box_w;
-    if (custom_popup_w > 0.f) {
-        total_box_w = custom_popup_w;
-    } else if (has_label) {
-        const float label_min_w = 60.f;
-        const float upper_bound = ImMax(default_min_w, avail - label_min_w - 6.f);
-        total_box_w = ImClamp(needed_w, default_min_w, upper_bound);
-    } else {
-        const float upper_bound = ImMax(default_min_w, avail - right_reserve);
-        total_box_w = ImClamp(needed_w, default_min_w, upper_bound);
-    }
+    const float box_w = custom_popup_w > 0.f ? custom_popup_w : ImMax(ImMin(150.f, avail - 40.f - right_reserve), 60.f);
 
     const ImVec2 pos = window->DC.CursorPos;
 
-    const ImVec2 box_min(pos.x + avail - total_box_w, pos.y + (row_h - box_h) * 0.5f);
-    const ImVec2 box_max(pos.x + avail - right_reserve, box_min.y + box_h);
+    const ImVec2 box_min(pos.x + 20.f, pos.y + (has_label ? 15.f : 2.f));
+    const ImVec2 box_max(box_min.x + box_w, box_min.y + box_h);
 
-    const ImRect label_rect(pos, ImVec2(box_min.x - 6.f, pos.y + row_h));
+    const ImRect label_rect(ImVec2(pos.x + 20.f, pos.y - 3.f), ImVec2(pos.x + avail, pos.y - 3.f + (font ? font->LegacySize : 12.f)));
     const ImRect value_rect(box_min, box_max);
     const ImRect row_rect(pos, ImVec2(pos.x + avail, pos.y + row_h));
 
@@ -220,25 +145,23 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
         GuiMarkPopupOpen();
 
     if (font && has_label) {
-        ImColor lc = IM_COL32(160, 160, 164, hovered_row ? 255 : 210);
-        Draw->TextClipped(window->DrawList, font, label_rect.Min, label_rect.Max, Draw->GetClr(lc), label, nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(window->DrawList, font, label_rect.Min, label_rect.Max, OtcStyle::Text(hovered_row ? 1.f : 0.82f), label, nullptr, nullptr, ImVec2(0.f, 0.f));
     }
 
-    ImVec4 bg_a = ImGui::ColorConvertU32ToFloat4(k_dd_box_bg);
-    ImVec4 bg_b = ImGui::ColorConvertU32ToFloat4(k_dd_box_bg_hov);
-    ImVec4 bg_f(ImLerp(bg_a.x, bg_b.x, state->hover), ImLerp(bg_a.y, bg_b.y, state->hover), ImLerp(bg_a.z, bg_b.z, state->hover), bg_a.w);
-    window->DrawList->AddRectFilled(value_rect.Min, value_rect.Max, ImGui::ColorConvertFloat4ToU32(bg_f), 8.f);
+    window->DrawList->AddRectFilled(value_rect.Min - ImVec2(1.f, 1.f), value_rect.Max + ImVec2(1.f, 1.f), OtcStyle::Border());
+    window->DrawList->AddRectFilled(value_rect.Min, value_rect.Max, OtcStyle::Control(1.f));
+    if (state->hover > 0.01f)
+        window->DrawList->AddRectFilled(value_rect.Min, value_rect.Max, OtcStyle::Text(0.06f * state->hover));
 
     if (font)
-        Draw->TextClipped(window->DrawList, font, value_text_rect.Min, value_text_rect.Max, k_dd_text_white, preview_value ? preview_value : "", nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(window->DrawList, font, value_text_rect.Min, value_text_rect.Max, OtcStyle::TextDim(), preview_value ? preview_value : "", nullptr, nullptr, ImVec2(0.f, 0.5f));
 
-    if (icon_font) {
-        const float fs = icon_font->LegacySize * 0.6f;
-        const char* icon_str = state->opened ? ICON_FA_CHEVRON_UP : ICON_FA_CHEVRON_DOWN;
-        ImVec2 isz = icon_font->CalcTextSizeA(fs, FLT_MAX, -1.f, icon_str);
-        ImVec2 ipos = icon_rect.GetCenter() - isz * 0.5f;
-        window->DrawList->AddText(icon_font, fs, ipos, k_dd_text_grey, icon_str);
-    }
+    const float arrow_mid_y = value_rect.GetCenter().y;
+    window->DrawList->AddTriangleFilled(
+        ImVec2(icon_rect.GetCenter().x - 3.f, arrow_mid_y - 2.f),
+        ImVec2(icon_rect.GetCenter().x + 3.f, arrow_mid_y - 2.f),
+        ImVec2(icon_rect.GetCenter().x, arrow_mid_y + 2.f),
+        OtcStyle::TextDim());
 
     if (!IsRectVisible(row_rect.Min, row_rect.Max + ImVec2(0, 2))) {
         state->opened = false;
@@ -250,8 +173,8 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
     if (!state->opened && state->alpha <= 0.01f)
         return false;
 
-    const float item_h = 28.f;
-    const float item_gap = 3.f;
+    const float item_h = 18.f;
+    const float item_gap = 0.f;
     const int max_visible_items = 5;
     const int total_items = static_cast<int>(items.size());
     const int visible_count = ImMax(1, ImMin(total_items, max_visible_items));
@@ -259,8 +182,8 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
     const float full_target_h = pad_y * 2.f + (static_cast<float>(visible_count) * item_h) + (static_cast<float>(visible_count - 1) * item_gap);
     const float current_h = ImMax(1.f, full_target_h * anim_ease);
 
-    const float popup_w = value_rect.GetWidth();
-    const ImVec2 popup_pos(value_rect.Min.x, value_rect.Max.y + 4.f);
+    const float popup_w = value_rect.GetWidth() + 1.f;
+    const ImVec2 popup_pos(value_rect.Min.x - 1.f, value_rect.Max.y + 1.f);
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground;
     if (total_items <= max_visible_items)
@@ -272,16 +195,16 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.f, 0.f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8.f);
     ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.f);
 
     ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));
     ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(0, 0, 0, 0));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(255, 255, 255, 28));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(255, 255, 255, 45));
-    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, IM_COL32(255, 255, 255, 60));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, k_dd_scroll_bg);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, k_dd_scroll_grab);
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(100, 100, 100, 255));
+    ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, IM_COL32(120, 120, 120, 255));
 
     ImGui::SetNextWindowPos(popup_pos, ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(popup_w, current_h), ImGuiCond_Always);
@@ -300,11 +223,8 @@ bool begin_combo(const char* label, const char* preview_value, int val, const st
         ImVec2 p_min = cur_popup_win->Pos;
         ImVec2 p_max = p_min + cur_popup_win->Size;
 
-        cur_popup_win->DrawList->PushClipRectFullScreen();
-        draw_box_shadow(cur_popup_win->DrawList, p_min, p_max, 12.f, anim_ease);
-        cur_popup_win->DrawList->PopClipRect();
-
-        cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_box_bg, 12.f);
+        cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_popup_bg);
+        cur_popup_win->DrawList->AddRect(p_min, p_max, k_dd_popup_border, 0.f, 0, 1.f);
     }
 
     if (state->need_focus) {
@@ -421,11 +341,8 @@ bool begin_config_combo(const char* label, const char* preview_value, ImVec2 box
         ImVec2 p_min = cur_popup_win->Pos;
         ImVec2 p_max = p_min + cur_popup_win->Size;
 
-        cur_popup_win->DrawList->PushClipRectFullScreen();
-        draw_box_shadow(cur_popup_win->DrawList, p_min, p_max, 12.f, anim_ease);
-        cur_popup_win->DrawList->PopClipRect();
-
-        cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_box_bg, 12.f);
+        cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_popup_bg);
+        cur_popup_win->DrawList->AddRect(p_min, p_max, k_dd_popup_border, 0.f, 0, 1.f);
     }
 
     if (state->need_focus) {
@@ -445,47 +362,15 @@ struct combo_item_anim {
 
 static void render_combo_item(ImGuiWindow* popup_window, const ImVec2& p_min, const ImVec2& p_max, const char* text, bool selected, float hover, float select, float right_reserve) {
     ImFont* pop_font = Var->font.inter[0];
-    ImFont* icon_font = Var->font.fa[0];
 
-    if (select > 0.01f)
-        popup_window->DrawList->AddRectFilled(p_min, p_max, IM_COL32(48, 50, 56, static_cast<int>(255.f * select)), 8.f);
-
-    if (hover > 0.01f && !selected)
-        popup_window->DrawList->AddRectFilled(p_min, p_max, IM_COL32(255, 255, 255, static_cast<int>(10.f * hover)), 8.f);
-
-    ImVec4 grey = ImGui::ColorConvertU32ToFloat4(k_dd_text_grey);
-    ImVec4 acc = Colors->accent.Value;
-    ImVec4 tc(ImLerp(grey.x, acc.x, select), ImLerp(grey.y, acc.y, select), ImLerp(grey.z, acc.z, select), 1.f);
-
-    if (!selected && hover > 0.01f) {
-        tc.x = ImLerp(tc.x, 0.92f, hover * 0.6f);
-        tc.y = ImLerp(tc.y, 0.92f, hover * 0.6f);
-        tc.z = ImLerp(tc.z, 0.92f, hover * 0.6f);
-    }
-
-    const float text_left = p_min.x + 10.f;
-    const float base_reserve = selected ? right_reserve : 10.f;
-
-    bool text_overflows = false;
-    if (pop_font) {
-        ImVec2 text_sz = pop_font->CalcTextSizeA(pop_font->LegacySize, FLT_MAX, -1.f, text);
-        float reserved_avail = (p_max.x - base_reserve) - text_left;
-        text_overflows = text_sz.x > reserved_avail;
-    }
-
-    const float check_hide = (selected && text_overflows) ? hover : 0.f;
-    const float check_alpha = select * (1.f - check_hide);
-    const float actual_right_reserve = ImLerp(base_reserve, 10.f, check_hide);
+    ImU32 color = OtcStyle::TextDim();
+    if (selected)
+        color = OtcStyle::Accent();
+    else if (hover > 0.01f)
+        color = OtcStyle::Accent(hover * 0.55f);
 
     if (pop_font)
-        Draw->TextClipped(popup_window->DrawList, pop_font, ImVec2(text_left, p_min.y), ImVec2(p_max.x - actual_right_reserve, p_max.y), ImGui::ColorConvertFloat4ToU32(tc), text, nullptr, nullptr, ImVec2(0.f, 0.5f));
-
-    if (check_alpha > 0.01f && icon_font) {
-        const float fs = icon_font->LegacySize * 0.65f;
-        ImVec2 isz = icon_font->CalcTextSizeA(fs, FLT_MAX, -1.f, ICON_FA_CHECK);
-        ImVec2 ipos(p_max.x - 12.f - isz.x, p_min.y + ((p_max.y - p_min.y) - isz.y) * 0.5f);
-        popup_window->DrawList->AddText(icon_font, fs, ipos, Draw->GetClr(Colors->accent, check_alpha), ICON_FA_CHECK);
-    }
+        popup_window->DrawList->AddText(pop_font, pop_font->LegacySize, ImVec2(p_min.x + 6.f, p_min.y + 2.f), color, text);
 }
 
 bool combo(const char* label, const char* desc, int* current_item, const std::vector<std::string>& items, int popup_max_height_in_items = -1, float right_reserve = 0.f, const char* bind_popup_name = "") {
@@ -503,7 +388,7 @@ bool combo(const char* label, const char* desc, int* current_item, const std::ve
     bool value_changed = false;
     ImGuiWindow* popup_window = GetCurrentWindow();
 
-    const float item_h = 28.f;
+    const float item_h = 18.f;
 
     for (int i = 0; i < static_cast<int>(items.size()); i++) {
         const char* itetext = getter(items, i);
@@ -630,7 +515,7 @@ void CGui::MultiDropdown(std::string_view label, std::vector<bool>* variable, co
         ImGuiWindow* popup_window = GetCurrentWindow();
         ImGuiContext& g = *GImGui;
 
-        const float item_h = 28.f;
+        const float item_h = 18.f;
 
         for (size_t i = 0; i < items.size(); ++i) {
             PushID(static_cast<int>(i));
@@ -706,7 +591,7 @@ void CGui::MultiDropdown(std::string_view label, std::vector<int>* variable, con
         ImGuiWindow* popup_window = GetCurrentWindow();
         ImGuiContext& g = *GImGui;
 
-        const float item_h = 28.f;
+        const float item_h = 18.f;
 
         for (size_t i = 0; i < items.size(); ++i) {
             PushID(static_cast<int>(i));
@@ -749,7 +634,7 @@ bool CGui::DropdownEx(std::string_view label, int* current_item, const std::vect
     sprintf_s(bind_popup_name, "##binds_popup_%u", id);
 
     const float row_h = 26.f;
-    const float gear_sz = 18.f;
+    const float gear_sz = 14.f;
     const float gear_gap = 6.f;
     const float right_res = gear_fn ? (gear_sz + gear_gap) : 0.f;
 
@@ -771,7 +656,6 @@ bool CGui::DropdownEx(std::string_view label, int* current_item, const std::vect
 
 bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* current_item, const std::vector<std::string>& items, bool insecure, std::function<void()> gear_fn) {
     struct CwdState {
-        float fill{ 0.f };
         float hover{ 0.f };
         float dd_alpha{ 0.f };
         float dd_hover{ 0.f };
@@ -798,9 +682,8 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
     const float avail = GetContentRegionAvail().x;
 
     const float row_h = 26.f;
-    const float box_sz = 18.f;
-    const float box_r = 5.f;
-    const float gear_sz = 18.f;
+    const float box_sz = 8.f;
+    const float gear_sz = 14.f;
     const float gear_gap = 6.f;
 
     const float box_x = pos.x + avail - box_sz;
@@ -815,7 +698,6 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
     }
 
     ImFont* font_regular = Var->font.inter[0];
-    ImFont* icon_font = Var->font.fa[0];
 
     float max_text_w = 0.f;
     if (font_regular) {
@@ -834,7 +716,8 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
 
     const float dd_right_limit = gear_fn ? (gear_anchor - gear_gap) : (box_x - 6.f);
     const float dd_x = dd_right_limit - dd_w;
-    const ImRect dd_rect(ImVec2(dd_x, pos.y + (row_h - 26.f) * 0.5f), ImVec2(dd_x + dd_w, pos.y + (row_h + 26.f) * 0.5f));
+    const float dd_h = 20.f;
+    const ImRect dd_rect(ImVec2(dd_x, pos.y + (row_h - dd_h) * 0.5f), ImVec2(dd_x + dd_w, pos.y + (row_h + dd_h) * 0.5f));
     const float label_rx = dd_x - 8.f;
 
     const ImRect row_rect(pos, ImVec2(pos.x + avail, pos.y + row_h));
@@ -905,7 +788,6 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
             s_open_combo_id = 0;
     }
 
-    state->fill = ImClamp(state->fill + Gui->FixedSpeed(14.f) * (*callback ? 1.f : -1.f), 0.f, 1.f);
     state->hover = ImClamp(state->hover + Gui->FixedSpeed(12.f) * (cb_hov ? 1.f : -1.f), 0.f, 1.f);
     state->dd_alpha = ImClamp(state->dd_alpha + Gui->FixedSpeed(14.f) * (state->dd_opened ? 1.f : -1.f), 0.f, 1.f);
     state->dd_hover = ImClamp(state->dd_hover + Gui->FixedSpeed(12.f) * ((dd_hov_r || state->dd_opened) ? 1.f : -1.f), 0.f, 1.f);
@@ -917,29 +799,12 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
 
     ImDrawList* dl = window->DrawList;
 
-    ImVec4 bg_off = Colors->button.background.Value;
-    ImVec4 bg_on = Colors->accent.Value;
-    ImVec4 bg_col(ImLerp(bg_off.x, bg_on.x, state->fill), ImLerp(bg_off.y, bg_on.y, state->fill), ImLerp(bg_off.z, bg_on.z, state->fill), ImLerp(bg_off.w, 1.f, state->fill));
-
-    if (state->hover > 0.01f && state->fill < 0.99f) {
-        bg_col.x = ImMin(bg_col.x + 0.03f * state->hover, 1.f);
-        bg_col.y = ImMin(bg_col.y + 0.03f * state->hover, 1.f);
-        bg_col.z = ImMin(bg_col.z + 0.03f * state->hover, 1.f);
-    }
-
-    dl->AddRectFilled(box_bb.Min, box_bb.Max, Draw->GetClr(ImColor(bg_col)), box_r);
-
-    if (state->fill < 0.99f) {
-        float b_alpha = ImLerp(0.04f, 0.10f, state->hover);
-        dl->AddRect(box_bb.Min, box_bb.Max, Draw->GetClr(Colors->divider, b_alpha), box_r, 0, 1.f);
-    }
-
-    if (state->fill > 0.005f) {
-        const float lum = 0.299f * bg_on.x + 0.587f * bg_on.y + 0.114f * bg_on.z;
-        const ImU32 ck_base_col = lum > 0.45f ? IM_COL32(18, 20, 26, 255) : IM_COL32(255, 255, 255, 255);
-        const ImU32 ck_col = Draw->GetClr(ImColor(ck_base_col), state->fill);
-        RenderCheckmark(dl, box_bb.GetCenter(), state->fill, ck_col);
-    }
+    dl->AddRectFilled(box_bb.Min, box_bb.Max, OtcStyle::Border());
+    dl->AddRectFilled(box_bb.Min + ImVec2(1.f, 1.f), box_bb.Max - ImVec2(1.f, 1.f), OtcStyle::CheckOff());
+    if (*callback)
+        dl->AddRectFilledMultiColor(box_bb.Min + ImVec2(1.f, 1.f), box_bb.Max - ImVec2(1.f, 1.f), OtcStyle::Accent(), OtcStyle::Accent(), OtcStyle::AccentShade(), OtcStyle::AccentShade());
+    if (state->hover > 0.01f && !*callback)
+        dl->AddRect(box_bb.Min, box_bb.Max, OtcStyle::Accent(0.45f * state->hover), 0.f, 0, 1.f);
 
     if (gear_fn) {
         std::string gear_uid = std::string(label.data()) + xs("_cwd_gear");
@@ -947,36 +812,29 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
     }
 
     if (font_regular) {
-        const float text_alpha = ImLerp(0.55f, 1.0f, ImMax(state->fill, state->hover * 0.5f));
-        ImColor tc = Colors->checkbox.text;
-        tc.Value.w = text_alpha;
-        Draw->TextClipped(dl, font_regular, ImVec2(pos.x, pos.y), ImVec2(label_rx, pos.y + row_h), Draw->GetClr(tc), label.data(), nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(dl, font_regular, ImVec2(pos.x + 20.f, pos.y), ImVec2(label_rx, pos.y + row_h), OtcStyle::Text(), label.data(), nullptr, nullptr, ImVec2(0.f, 0.5f));
     }
 
-    ImVec4 dd_bg_a = ImGui::ColorConvertU32ToFloat4(k_dd_box_bg);
-    ImVec4 dd_bg_b = ImGui::ColorConvertU32ToFloat4(k_dd_box_bg_hov);
-    ImVec4 dd_bg_f(ImLerp(dd_bg_a.x, dd_bg_b.x, state->dd_hover), ImLerp(dd_bg_a.y, dd_bg_b.y, state->dd_hover), ImLerp(dd_bg_a.z, dd_bg_b.z, state->dd_hover), dd_bg_a.w);
-    dl->AddRectFilled(dd_rect.Min, dd_rect.Max, ImGui::ColorConvertFloat4ToU32(dd_bg_f), 8.f);
+    dl->AddRectFilled(dd_rect.Min - ImVec2(1.f, 1.f), dd_rect.Max + ImVec2(1.f, 1.f), OtcStyle::Border());
+    dl->AddRectFilled(dd_rect.Min, dd_rect.Max, OtcStyle::Control(1.f));
+    if (state->dd_hover > 0.01f)
+        dl->AddRectFilled(dd_rect.Min, dd_rect.Max, OtcStyle::Text(0.06f * state->dd_hover));
 
     const char* preview_value = (*current_item >= 0 && *current_item < static_cast<int>(items.size())) ? items[*current_item].c_str() : "";
 
     const float text_pad = 10.f;
-    const float icon_pad = 10.f;
-    const float icon_w = 10.f;
-
-    const ImRect value_text_rect(ImVec2(dd_rect.Min.x + text_pad, dd_rect.Min.y), ImVec2(dd_rect.Max.x - icon_pad - icon_w, dd_rect.Max.y));
-    const ImRect icon_rect(ImVec2(dd_rect.Max.x - icon_pad - icon_w, dd_rect.Min.y), ImVec2(dd_rect.Max.x - icon_pad, dd_rect.Max.y));
+    const ImRect value_text_rect(ImVec2(dd_rect.Min.x + text_pad, dd_rect.Min.y), ImVec2(dd_rect.Max.x - 24.f, dd_rect.Max.y));
 
     if (font_regular)
-        Draw->TextClipped(dl, font_regular, value_text_rect.Min, value_text_rect.Max, k_dd_text_white, preview_value, nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(dl, font_regular, value_text_rect.Min, value_text_rect.Max, OtcStyle::TextDim(), preview_value, nullptr, nullptr, ImVec2(0.f, 0.5f));
 
-    if (icon_font) {
-        const float fs = icon_font->LegacySize * 0.6f;
-        const char* icon_str = state->dd_opened ? ICON_FA_CHEVRON_UP : ICON_FA_CHEVRON_DOWN;
-        ImVec2 isz = icon_font->CalcTextSizeA(fs, FLT_MAX, -1.f, icon_str);
-        ImVec2 ipos = icon_rect.GetCenter() - isz * 0.5f;
-        dl->AddText(icon_font, fs, ipos, k_dd_text_grey, icon_str);
-    }
+    const float arrow_cx = dd_rect.Max.x - 13.f;
+    const float arrow_cy = dd_rect.GetCenter().y;
+    dl->AddTriangleFilled(
+        ImVec2(arrow_cx - 3.f, arrow_cy - 2.f),
+        ImVec2(arrow_cx + 3.f, arrow_cy - 2.f),
+        ImVec2(arrow_cx, arrow_cy + 2.f),
+        OtcStyle::TextDim());
 
     if (!IsRectVisible(row_rect.Min, row_rect.Max + ImVec2(0, 2))) {
         state->dd_opened = false;
@@ -986,39 +844,39 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
     }
 
     if (state->dd_opened || state->dd_alpha > 0.01f) {
-        const float item_h = 28.f;
-        const float item_gap = 3.f;
+        const float item_h = 18.f;
+        const float item_gap = 0.f;
         const int max_visible_items = 5;
         const int total_items = static_cast<int>(items.size());
         const int visible_count = ImMax(1, ImMin(total_items, max_visible_items));
-        const float pad_y = 7.f;
+        const float pad_y = 4.f;
 
         const float full_target_h = pad_y * 2.f + (static_cast<float>(visible_count) * item_h) + (static_cast<float>(visible_count - 1) * item_gap);
         const float current_h = ImMax(1.f, full_target_h * anim_ease);
 
-        const float popup_w = dd_rect.GetWidth();
-        const ImVec2 popup_pos(dd_rect.Min.x, dd_rect.Max.y + 4.f);
+        const float popup_w = dd_rect.GetWidth() + 1.f;
+        const ImVec2 popup_pos(dd_rect.Min.x - 1.f, dd_rect.Max.y + 1.f);
 
         ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoBackground;
         if (total_items <= max_visible_items)
             window_flags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad_x, pad_y));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.f, pad_y));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, item_gap));
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(0.f, 0.f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 4.f);
+        ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 8.f);
         ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, 0.f);
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_PopupBg, IM_COL32(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, IM_COL32(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, IM_COL32(255, 255, 255, 28));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(255, 255, 255, 45));
-        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, IM_COL32(255, 255, 255, 60));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarBg, k_dd_scroll_bg);
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrab, k_dd_scroll_grab);
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabHovered, IM_COL32(100, 100, 100, 255));
+        ImGui::PushStyleColor(ImGuiCol_ScrollbarGrabActive, IM_COL32(120, 120, 120, 255));
 
         ImGui::SetNextWindowPos(popup_pos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(popup_w, current_h), ImGuiCond_Always);
@@ -1037,11 +895,8 @@ bool CGui::CheckboxWithDropdown(std::string_view label, bool* callback, int* cur
                 ImVec2 p_min = cur_popup_win->Pos;
                 ImVec2 p_max = p_min + cur_popup_win->Size;
 
-                cur_popup_win->DrawList->PushClipRectFullScreen();
-                draw_box_shadow(cur_popup_win->DrawList, p_min, p_max, 12.f, anim_ease);
-                cur_popup_win->DrawList->PopClipRect();
-
-                cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_box_bg, 12.f);
+                cur_popup_win->DrawList->AddRectFilled(p_min, p_max, k_dd_popup_bg);
+                cur_popup_win->DrawList->AddRect(p_min, p_max, k_dd_popup_border, 0.f, 0, 1.f);
             }
 
             if (state->dd_need_focus) {

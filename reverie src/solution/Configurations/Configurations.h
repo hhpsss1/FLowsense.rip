@@ -125,7 +125,7 @@ namespace Config {
         SerializeGroup(group_name, bool, MultipointArms, true); \
         SerializeGroup(group_name, bool, MultipointLegs, true); \
         SerializeGroup(group_name, bool, MultipointFeet, true); \
-        // --- CS2 hitbox resolver ---
+        /* --- CS2 hitbox resolver --- */ \
         SerializeGroup(group_name, bool, Resolver, true); \
         SerializeGroup(group_name, int, ResolverMode, 0); \
         SerializeGroup(group_name, int, ResolverHitboxPriority, 0); \
@@ -553,7 +553,17 @@ namespace Vars {
         Serialize(bool, WatermarkSpeed, true);
         Serialize(bool, WatermarkTime, true);
         Serialize(int, WatermarkOpacity, 120);
-        Serialize(Color_t, WatermarkAccentColor, Color_t(152, 182, 248, 255));
+        Serialize(Color_t, WatermarkAccentColor, Color_t(210, 150, 20, 122));
+        Serialize(bool, BindsList, true);
+        Serialize(Color_t, BindsListColor, Color_t(210, 150, 20, 122));
+        Serialize(int, BindsListOpacity, 160);
+        Serialize(float, BindsListPosX, -1.f);
+        Serialize(float, BindsListPosY, -1.f);
+        Serialize(bool, SpectatorList, true);
+        Serialize(Color_t, SpectatorListColor, Color_t(210, 150, 20, 122));
+        Serialize(int, SpectatorListOpacity, 160);
+        Serialize(float, SpectatorListPosX, -1.f);
+        Serialize(float, SpectatorListPosY, -1.f);
 
         Serialize(bool, Indicators, false);
         SerializeVector(int, IndicatorItems, std::vector<int>(8, 0));

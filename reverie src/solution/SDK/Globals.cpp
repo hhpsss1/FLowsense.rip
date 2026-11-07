@@ -111,7 +111,7 @@ void Entry_t::Fill(HMODULE m) {
 	while (!GetModuleHandleA(xs("navsystem.dll")))
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-	Logger->Attach(xs("Reverie Reborn (skinvvvalker rework)"));
+	Logger->Attach(xs("reverie onetap skidd"));
 
 	Memory->Modules.Fill();
 	Patterns::Initialize();

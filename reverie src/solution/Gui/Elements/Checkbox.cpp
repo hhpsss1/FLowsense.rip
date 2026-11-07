@@ -36,6 +36,111 @@ ImU32 GuiPopupBg(float alpha) {
     return Draw->GetClr(c, alpha);
 }
 
+static void DrawPopupWindowLayers(ImDrawList* dl, const ImVec2& min, const ImVec2& max) {
+    dl->AddRectFilled(min, max, OtcStyle::WindowShadow());
+    dl->AddRectFilled(min + ImVec2(1.f, 1.f), max - ImVec2(1.f, 1.f), OtcStyle::WindowLine());
+    dl->AddRectFilled(min + ImVec2(2.f, 2.f), max - ImVec2(2.f, 2.f), OtcStyle::WindowBetween());
+    dl->AddRectFilled(min + ImVec2(5.f, 5.f), max - ImVec2(5.f, 5.f), IM_COL32(57, 57, 57, 190));
+    dl->AddRectFilled(min + ImVec2(6.f, 6.f), max - ImVec2(6.f, 6.f), OtcStyle::WindowFace());
+}
+
+bool DrawOtcColorPicker(ImDrawList* dl, const ImVec2& popup_min, Color_t& col, OtcPickerState& state) {
+    constexpr float picker_size = 179.f;
+    constexpr float bar_h = 8.f;
+    constexpr float pad = 10.f;
+    const float popup_w = picker_size + 2.f + pad * 2.f;
+    const float popup_h = picker_size + bar_h + 3.f + pad * 2.f;
+    const ImVec2 popup_max(popup_min.x + popup_w, popup_min.y + popup_h);
+
+    dl->AddRectFilled(popup_min, popup_max, IM_COL32(35, 35, 35, 255));
+    DrawPopupWindowLayers(dl, popup_min, popup_max);
+    dl->AddRectFilled(popup_min + ImVec2(pad, pad), popup_max - ImVec2(pad, pad), IM_COL32(0, 0, 0, 255));
+
+    const ImVec2 palette_min(popup_min.x + pad + 1.f, popup_min.y + pad + 1.f);
+    const ImVec2 palette_max(palette_min.x + picker_size, palette_min.y + picker_size);
+    const ImVec2 mouse = ImGui::GetIO().MousePos;
+    const float half = picker_size * 0.5f;
+    bool changed = false;
+
+    ImGui::SetCursorScreenPos(palette_min);
+    ImGui::InvisibleButton("palette_area", ImVec2(picker_size, picker_size));
+    if (ImGui::IsItemClicked())
+        state.held = true;
+
+    if (!state.held) {
+        float h = 0.f, s = 0.f, v = 0.f;
+        ImGui::ColorConvertRGBtoHSV(col.Rf(), col.Gf(), col.Bf(), h, s, v);
+        state.marker = ImVec2(h * picker_size, v < 1.f ? half + (1.f - v) * half : s * half);
+    }
+
+    if (state.held && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const float sample_x = std::clamp(mouse.x, palette_min.x, palette_max.x);
+        const float sample_y = std::clamp(mouse.y, palette_min.y, palette_max.y);
+        state.marker = ImVec2(sample_x - palette_min.x, sample_y - palette_min.y);
+
+        const float hue = std::clamp((sample_x - palette_min.x) / picker_size, 0.f, 1.f);
+        const float dy = sample_y - palette_min.y;
+        const float sat = dy > half ? 1.f : std::clamp(dy / half, 0.f, 1.f);
+        const float val = dy > half ? 1.f - std::clamp((dy - half) / half, 0.f, 1.f) : 1.f;
+
+        float r = 0.f, g = 0.f, b = 0.f;
+        ImGui::ColorConvertHSVtoRGB(hue, sat, val, r, g, b);
+        col = Color_t(r, g, b, col.Af());
+        changed = true;
+    }
+    if (state.held && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        state.held = false;
+
+    for (int i = 0; i < static_cast<int>(picker_size); ++i) {
+        ImVec4 hue_color;
+        ImGui::ColorConvertHSVtoRGB(static_cast<float>(i) / picker_size, 1.f, 1.f, hue_color.x, hue_color.y, hue_color.z);
+        const ImU32 top = IM_COL32(255, 255, 255, 255);
+        const ImU32 middle = IM_COL32(static_cast<int>(hue_color.x * 255.f), static_cast<int>(hue_color.y * 255.f), static_cast<int>(hue_color.z * 255.f), 255);
+        const float px = palette_min.x + static_cast<float>(i);
+        dl->AddRectFilledMultiColor(ImVec2(px, palette_min.y), ImVec2(px + 1.f, palette_min.y + half), top, top, middle, middle);
+        dl->AddRectFilledMultiColor(ImVec2(px, palette_min.y + half), ImVec2(px + 1.f, palette_max.y), middle, middle, IM_COL32(0, 0, 0, 255), IM_COL32(0, 0, 0, 255));
+    }
+
+    const ImVec2 mark(palette_min.x + state.marker.x, palette_min.y + state.marker.y);
+    dl->PushClipRect(palette_min, palette_max, true);
+    dl->AddCircle(mark, 4.5f, IM_COL32(0, 0, 0, 255), 0, 3.f);
+    dl->AddCircle(mark, 4.5f, IM_COL32(255, 255, 255, 255), 0, 1.f);
+    dl->PopClipRect();
+
+    const ImVec2 bar_min(palette_min.x, palette_max.y + 1.f);
+    const ImVec2 bar_max(palette_max.x, bar_min.y + bar_h);
+    ImGui::SetCursorScreenPos(bar_min);
+    ImGui::InvisibleButton("alpha_area", ImVec2(picker_size, bar_h));
+    if (ImGui::IsItemClicked())
+        state.held_alpha = true;
+    if (state.held_alpha) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const float new_alpha = std::clamp((mouse.x - bar_min.x - 1.5f) / (picker_size - 3.f), 0.f, 1.f);
+            col = Color_t(col.Rf(), col.Gf(), col.Bf(), new_alpha);
+            changed = true;
+        } else {
+            state.held_alpha = false;
+        }
+    }
+
+    for (int i = 0; i * 4 < static_cast<int>(picker_size); ++i) {
+        for (int j = 0; j < 2; ++j) {
+            const ImVec2 cell_min(bar_min.x + i * 4.f, bar_min.y + j * 4.f);
+            dl->AddRectFilled(cell_min, ImVec2(std::min(cell_min.x + 4.f, bar_max.x), cell_min.y + 4.f), (i + j) & 1 ? IM_COL32(153, 153, 153, 255) : IM_COL32(255, 255, 255, 255));
+        }
+    }
+
+    const ImU32 opaque = ImGui::ColorConvertFloat4ToU32(ImVec4(col.Rf(), col.Gf(), col.Bf(), 1.f));
+    const ImU32 transparent = opaque & ~IM_COL32_A_MASK;
+    dl->AddRectFilledMultiColor(bar_min, bar_max, transparent, opaque, opaque, transparent);
+
+    const float handle_x = std::round(bar_min.x + col.Af() * (picker_size - 3.f));
+    dl->AddRectFilled(ImVec2(handle_x, bar_min.y), ImVec2(handle_x + 3.f, bar_max.y), IM_COL32(0, 0, 0, 255));
+    dl->AddRectFilled(ImVec2(handle_x + 1.f, bar_min.y), ImVec2(handle_x + 2.f, bar_max.y), IM_COL32(255, 255, 255, 255));
+
+    return changed;
+}
+
 static bool IsAnyChildPopupOrDropdownHovered() {
     return GuiIsPopupHovered();
 }
@@ -80,6 +185,7 @@ static void RenderInlineSwatch(ImDrawList* dl, const ImRect& bb, Color_t& col, b
         int last_frame = 0;
         bool was_picking = false;
         bool refocus = false;
+        OtcPickerState picker{};
     };
 
     extern bool GuiColorPicking();
@@ -96,17 +202,19 @@ static void RenderInlineSwatch(ImDrawList* dl, const ImRect& bb, Color_t& col, b
     bool hovered, held;
     bool pressed = ImGui::ButtonBehavior(bb, id, &hovered, &held);
 
-    const float r = 5.f;
     ImVec4 cv(col.Rf(), col.Gf(), col.Bf(), alpha ? col.Af() : 1.f);
     ImU32 col_u32 = ImGui::ColorConvertFloat4ToU32(cv);
 
-    if (alpha && col.Af() < 0.99f)
-        RenderColorRectWithAlphaCheckboard(dl, bb.Min, bb.Max, IM_COL32(0, 0, 0, 0), bb.GetWidth() / 4.f, ImVec2(0, 0), r, 0);
-
-    dl->AddRectFilled(bb.Min, bb.Max, col_u32, r);
-
-    if (hovered)
-        dl->AddRect(bb.Min, bb.Max, IM_COL32(255, 255, 255, 35), r, 0, 1.f);
+    dl->AddRectFilled(bb.Min, bb.Max, IM_COL32(0, 0, 0, 255));
+    const ImVec2 inner_min(bb.Min.x + 1.f, bb.Min.y + 1.f);
+    const ImVec2 inner_max(bb.Max.x - 1.f, bb.Max.y - 1.f);
+    for (int i = 0; i * 3 < static_cast<int>(inner_max.x - inner_min.x); ++i) {
+        for (int j = 0; j * 3 < static_cast<int>(inner_max.y - inner_min.y); ++j) {
+            const ImVec2 cell_min(inner_min.x + i * 3.f, inner_min.y + j * 3.f);
+            dl->AddRectFilled(cell_min, ImVec2(ImMin(cell_min.x + 3.f, inner_max.x), ImMin(cell_min.y + 3.f, inner_max.y)), (i + j) & 1 ? IM_COL32(153, 153, 153, 255) : IM_COL32(255, 255, 255, 255));
+        }
+    }
+    dl->AddRectFilled(inner_min, inner_max, col_u32);
 
     SwState* st = Gui->AnimContainer(&st, id);
 
@@ -153,22 +261,29 @@ static void RenderInlineSwatch(ImDrawList* dl, const ImRect& bb, Color_t& col, b
     }
 
     const float anim_ease = st->a * st->a * (3.f - 2.f * st->a);
+    constexpr float picker_size = 179.f;
+    constexpr float bar_h = 8.f;
+    constexpr float picker_pad = 10.f;
+    const float popup_w = picker_size + 2.f + picker_pad * 2.f;
+    const float popup_h = picker_size + bar_h + 3.f + picker_pad * 2.f;
 
     Gui->PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
-    Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-    Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
-    Gui->PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 12.f));
+    Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+    Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
+    Gui->PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(1.f, 1.f));
 
-    Gui->PushStyleColor(ImGuiCol_WindowBg, GuiPopupBg(0.98f));
-    Gui->PushStyleColor(ImGuiCol_Border, IM_COL32(255, 255, 255, 24));
+    Gui->PushStyleColor(ImGuiCol_WindowBg, IM_COL32(16, 16, 16, 255));
+    Gui->PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
 
     ImVec2 popup_pos = st->anchor + ImVec2(0.f, (1.f - anim_ease) * -6.f);
     ImGui::SetNextWindowPos(popup_pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowSize(ImVec2(popup_w, popup_h), ImGuiCond_Always);
 
     std::string overlay_name = std::string("##swatch_overlay_") + uid;
 
-    if (ImGui::Begin(overlay_name.c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove)) {
+    if (ImGui::Begin(overlay_name.c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar)) {
         ImGuiWindow* popup_win = ImGui::GetCurrentWindow();
+        ImDrawList* pdl = popup_win->DrawList;
 
         ImGui::BringWindowToDisplayFront(popup_win);
 
@@ -184,18 +299,7 @@ static void RenderInlineSwatch(ImDrawList* dl, const ImRect& bb, Color_t& col, b
 
         st->picker_hov = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows);
 
-        float tmp[4] = { col.Rf(), col.Gf(), col.Bf(), alpha ? col.Af() : 1.f };
-
-        ImGuiColorEditFlags fl = ImGuiColorEditFlags_DisplayRGB | ImGuiColorEditFlags_InputRGB | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_NoSmallPreview;
-
-        if (alpha) {
-            fl |= ImGuiColorEditFlags_AlphaBar;
-        } else {
-            fl |= ImGuiColorEditFlags_NoAlpha;
-        }
-
-        if (ColorPicker(xs("##sp"), tmp, fl, nullptr))
-            col = Color_t(tmp[0], tmp[1], tmp[2], alpha ? tmp[3] : col.A());
+        DrawOtcColorPicker(pdl, popup_win->Pos, col, st->picker);
     }
     ImGui::End();
 
@@ -297,12 +401,12 @@ void RenderGearPopupFn(ImDrawList* dl, const ImRect& gear_bb, const char* label_
         const ImVec2 popup_pos = ImVec2(gear_bb.Max.x, gear_bb.Max.y + 4.f + (1.f - anim_ease) * -6.f);
 
         Gui->PushStyleVar(ImGuiStyleVar_Alpha, anim_ease);
-        Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-        Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+        Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.f);
+        Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
         Gui->PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 12.f));
         Gui->PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.f, 6.f));
-        Gui->PushStyleColor(ImGuiCol_WindowBg, GuiPopupBg(0.98f));
-        Gui->PushStyleColor(ImGuiCol_Border, IM_COL32(255, 255, 255, 24));
+        Gui->PushStyleColor(ImGuiCol_WindowBg, IM_COL32(16, 16, 16, 255));
+        Gui->PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
 
         ImGui::SetNextWindowPos(popup_pos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
         std::string wname = std::string("##gear_popup_") + label_uid;
@@ -315,6 +419,12 @@ void RenderGearPopupFn(ImDrawList* dl, const ImRect& gear_bb, const char* label_
             }
 
             ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+
+            ImDrawList* wdl = ImGui::GetWindowDrawList();
+            const ImVec2 wmin = ImGui::GetWindowPos();
+            const ImVec2 wmax = wmin + ImGui::GetWindowSize();
+            wdl->AddRectFilled(wmin, wmax, IM_COL32(35, 35, 35, 255));
+            DrawPopupWindowLayers(wdl, wmin, wmax);
 
             if (st->need_focus) {
                 ImGui::SetWindowFocus();
@@ -344,7 +454,6 @@ bool CGui::Checkbox(std::string_view label, bool* callback) {
 
 bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Color_t** colors, int color_count, std::function<void()> gear_fn) {
     struct CheckboxState {
-        float fill{ 0.f };
         float hover{ 0.f };
     };
 
@@ -360,24 +469,19 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
     const ImVec2 pos = window->DC.CursorPos;
     const float avail = GetContentRegionAvail().x;
 
-    const float box_sz = 14.f;
-    const float row_h = 20.f;
-    const float box_r = 0.f;
-    const float swatch_sz = 14.f;
+    const float box_sz = 8.f;
+    const float row_h = 15.f;
+    const float swatch_w = 20.f;
+    const float swatch_h = 8.f;
     const float swatch_gap = 4.f;
     const float gear_sz = 14.f;
     const float badge_sz = 10.f;
-    const float right_pad = 0.f;
 
     color_count = ImClamp(color_count, 0, 4);
 
-    const float box_x = pos.x + avail - right_pad - box_sz;
-    const float box_y = pos.y + (row_h - box_sz) * 0.5f;
-    const ImRect box_bb(ImVec2(box_x, box_y), ImVec2(box_x + box_sz, box_y + box_sz));
-
-    float right_side_w = box_sz + right_pad;
+    float right_side_w = 0.f;
     if (color_count > 0 && colors)
-        right_side_w += color_count * (swatch_sz + swatch_gap);
+        right_side_w += color_count * (swatch_w + swatch_gap);
     if (gear_fn)
         right_side_w += gear_sz + swatch_gap;
     if (insecure)
@@ -389,11 +493,11 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
         return false;
 
     const bool hovered = ImGui::IsMouseHoveringRect(rect.Min, rect.Max) && g.HoveredWindow == window;
-    const float interactive_min_x = box_x - (right_side_w - box_sz - right_pad);
-    const bool in_swatch_or_gear = (color_count > 0 || gear_fn) && io.MousePos.x >= interactive_min_x && io.MousePos.x < box_x;
+    const float right_side_min_x = pos.x + avail - right_side_w;
+    const bool in_right_side = io.MousePos.x >= right_side_min_x && io.MousePos.x < pos.x + avail;
 
     bool pressed = false;
-    if (hovered && !in_swatch_or_gear && io.MouseClicked[0]) {
+    if (hovered && !in_right_side && io.MouseClicked[0]) {
         pressed = true;
         *callback = !(*callback);
         MarkItemEdited(id);
@@ -405,65 +509,51 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
         ImGui::OpenPopup(bind_popup_name);
 
     CheckboxState* state = Gui->AnimContainer(&state, id);
-    state->fill = ImClamp(state->fill + FixedSpeed(14.f) * (*callback ? 1.f : -1.f), 0.f, 1.f);
     state->hover = ImClamp(state->hover + FixedSpeed(12.f) * (hovered ? 1.f : -1.f), 0.f, 1.f);
 
     ImDrawList* dl = window->DrawList;
+    const float bx = pos.x;
+    const float by = pos.y;
 
-    ImVec4 bg_off = Colors->button.background.Value;
-    ImVec4 bg_on = Colors->accent.Value;
+    dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + box_sz, by + box_sz), OtcStyle::Border());
+    dl->AddRectFilled(ImVec2(bx + 1.f, by + 1.f), ImVec2(bx + box_sz - 1.f, by + box_sz - 1.f), OtcStyle::CheckOff());
+    if (*callback) {
+        dl->AddRectFilledMultiColor(ImVec2(bx + 1.f, by + 1.f), ImVec2(bx + box_sz - 1.f, by + box_sz - 1.f),
+            OtcStyle::Accent(), OtcStyle::Accent(), OtcStyle::AccentShade(), OtcStyle::AccentShade());
+    }
+    if (state->hover > 0.01f && !*callback)
+        dl->AddRect(ImVec2(bx, by), ImVec2(bx + box_sz, by + box_sz), OtcStyle::Accent(0.45f * state->hover), 0.f, 0, 1.f);
 
-    ImVec4 bg_col(
-        ImLerp(bg_off.x, bg_on.x, state->fill),
-        ImLerp(bg_off.y, bg_on.y, state->fill),
-        ImLerp(bg_off.z, bg_on.z, state->fill),
-        ImLerp(bg_off.w, 1.f, state->fill)
-    );
-
-    if (state->hover > 0.01f && state->fill < 0.99f) {
-        bg_col.x = ImMin(bg_col.x + 0.03f * state->hover, 1.f);
-        bg_col.y = ImMin(bg_col.y + 0.03f * state->hover, 1.f);
-        bg_col.z = ImMin(bg_col.z + 0.03f * state->hover, 1.f);
+    ImFont* font_regular = Var->font.inter[0];
+    if (font_regular) {
+        const ImU32 text_clr = OtcStyle::Text();
+        Draw->TextClipped(dl, font_regular, ImVec2(pos.x + 20.f, pos.y - 4.f), ImVec2(right_side_min_x - 8.f, pos.y + 9.f), text_clr, label.data(), nullptr, nullptr, ImVec2(0.f, 0.f));
     }
 
-    dl->AddRectFilled(box_bb.Min, box_bb.Max, Draw->GetClr(ImColor(bg_col)), box_r);
+    float rx = pos.x + avail;
 
-    if (state->fill < 0.99f) {
-        float b_alpha = ImLerp(0.30f, 0.60f, state->hover);
-        dl->AddRect(box_bb.Min, box_bb.Max, Draw->GetClr(Colors->divider, b_alpha), box_r, 0, 1.f);
+    if (gear_fn) {
+        rx -= gear_sz;
+        ImRect gear_bb(ImVec2(rx, pos.y + (row_h - gear_sz) * 0.5f), ImVec2(rx + gear_sz, pos.y + (row_h + gear_sz) * 0.5f));
+        std::string uid = std::string(label.data()) + "_gear";
+        RenderGearPopupFn(dl, gear_bb, uid.c_str(), gear_fn);
+        rx -= swatch_gap;
     }
-
-    if (state->fill > 0.005f) {
-        const float lum = 0.299f * bg_on.x + 0.587f * bg_on.y + 0.114f * bg_on.z;
-        const ImColor ck_base_col = lum > 0.45f ? ImColor(18, 20, 26) : ImColor(255, 255, 255);
-        const ImU32 ck_col = Draw->GetClr(ck_base_col, state->fill);
-        RenderCheckmark(dl, box_bb.GetCenter(), state->fill, ck_col);
-    }
-
-    float rx = box_x;
 
     if (color_count > 0 && colors) {
-        const float sw_y = pos.y + (row_h - swatch_sz) * 0.5f;
+        const float sw_y = pos.y + (row_h - swatch_h) * 0.5f;
         for (int i = color_count - 1; i >= 0; --i) {
             if (!colors[i])
                 continue;
 
-            rx -= (swatch_sz + swatch_gap);
-            ImRect sw_bb(ImVec2(rx, sw_y), ImVec2(rx + swatch_sz, sw_y + swatch_sz));
+            rx -= swatch_w;
+            ImRect sw_bb(ImVec2(rx, sw_y), ImVec2(rx + swatch_w, sw_y + swatch_h));
 
             std::string sw_uid = std::string(label.data()) + "_sw_" + std::to_string(i);
             RenderInlineSwatch(dl, sw_bb, *colors[i], true, sw_uid.c_str());
+            rx -= swatch_gap;
         }
     }
-
-    if (gear_fn) {
-        rx -= (gear_sz + swatch_gap);
-        ImRect gear_bb(ImVec2(rx, pos.y), ImVec2(rx + gear_sz, pos.y + row_h));
-        std::string uid = std::string(label.data()) + "_gear";
-        RenderGearPopupFn(dl, gear_bb, uid.c_str(), gear_fn);
-    }
-
-    ImFont* font_regular = Var->font.inter[0];
 
     if (insecure) {
         ImFont* fa = Var->font.fa[0];
@@ -485,10 +575,10 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
             if (bt->a >= 0.01f) {
                 Gui->PushStyleVar(ImGuiStyleVar_Alpha, bt->a);
                 Gui->PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.f, 12.f));
-                Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 12.f);
+                Gui->PushStyleVar(ImGuiStyleVar_WindowRounding, 0.f);
                 Gui->PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.f);
-                Gui->PushStyleColor(ImGuiCol_WindowBg, GuiPopupBg(0.98f));
-                Gui->PushStyleColor(ImGuiCol_Border, IM_COL32(255, 255, 255, 24));
+                Gui->PushStyleColor(ImGuiCol_WindowBg, IM_COL32(36, 36, 36, 255));
+                Gui->PushStyleColor(ImGuiCol_Border, OtcStyle::Border());
 
                 ImGui::SetNextWindowPos(badge_bb.GetBL() + ImVec2(0, 4.f));
                 if (ImGui::Begin((std::string("##btip_") + label.data()).c_str(), nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoFocusOnAppearing)) {
@@ -505,17 +595,11 @@ bool CGui::CheckboxEx(std::string_view label, bool* callback, bool insecure, Col
                         ImGui::PopFont();
                 }
                 ImGui::End();
-                Gui->PopStyleVar(4);
+
                 Gui->PopStyleColor(2);
+                Gui->PopStyleVar(4);
             }
         }
-    }
-
-    if (font_regular) {
-        const float text_alpha = ImLerp(0.55f, 1.0f, ImMax(state->fill, state->hover * 0.5f));
-        ImColor tc = Colors->checkbox.text;
-        tc.Value.w = text_alpha;
-        Draw->TextClipped(dl, font_regular, ImVec2(pos.x, pos.y), ImVec2(rx - 8.f, pos.y + row_h), Draw->GetClr(tc), label.data(), nullptr, nullptr, ImVec2(0.f, 0.5f));
     }
 
     Binds::RenderCheckboxPopup(bind_popup_name, label, callback);
@@ -535,14 +619,14 @@ bool CGui::ListEx(std::string_view label, Color_t** colors, int color_count, std
     ImGuiContext& g = *GImGui;
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label.data());
-
     const ImVec2 pos = window->DC.CursorPos;
     const float avail = GetContentRegionAvail().x;
 
     const float row_h = 24.f;
-    const float swatch_sz = 18.f;
+    const float swatch_w = 20.f;
+    const float swatch_h = 8.f;
     const float swatch_gap = 6.f;
-    const float gear_sz = 18.f;
+    const float gear_sz = 14.f;
     const float right_pad = 0.f;
 
     color_count = ImClamp(color_count, 0, 4);
@@ -551,7 +635,7 @@ bool CGui::ListEx(std::string_view label, Color_t** colors, int color_count, std
     if (gear_fn)
         right_used += gear_sz + swatch_gap;
     if (color_count > 0 && colors)
-        right_used += color_count * (swatch_sz + swatch_gap);
+        right_used += color_count * (swatch_w + swatch_gap);
 
     const ImRect rect(pos, ImVec2(pos.x + avail, pos.y + row_h));
     ItemSize(rect, style.FramePadding.y);
@@ -565,29 +649,27 @@ bool CGui::ListEx(std::string_view label, Color_t** colors, int color_count, std
     ImFont* font_regular = Var->font.inter[0];
     if (font_regular) {
         float label_right = pos.x + avail - right_used;
-        ImVec4 tc = Colors->checkbox.text.Value;
-        tc.w = hovered ? 0.90f : 0.60f;
-        Draw->TextClipped(dl, font_regular, pos, ImVec2(label_right, pos.y + row_h), Draw->GetClr(ImColor(tc)), label.data(), nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(dl, font_regular, ImVec2(pos.x + 20.f, pos.y), ImVec2(label_right, pos.y + row_h), OtcStyle::Text(), label.data(), nullptr, nullptr, ImVec2(0.f, 0.5f));
     }
 
     float rx = pos.x + avail - right_pad;
 
     if (gear_fn) {
         rx -= gear_sz;
-        ImRect gear_bb(ImVec2(rx, pos.y), ImVec2(rx + gear_sz, pos.y + row_h));
+        ImRect gear_bb(ImVec2(rx, pos.y + (row_h - gear_sz) * 0.5f), ImVec2(rx + gear_sz, pos.y + (row_h + gear_sz) * 0.5f));
         std::string uid = std::string(label.data()) + "_list_gear";
         RenderGearPopupFn(dl, gear_bb, uid.c_str(), gear_fn);
         rx -= swatch_gap;
     }
 
     if (color_count > 0 && colors) {
-        float sw_y = pos.y + (row_h - swatch_sz) * 0.5f;
+        float sw_y = pos.y + (row_h - swatch_h) * 0.5f;
         for (int i = color_count - 1; i >= 0; --i) {
             if (!colors[i])
                 continue;
 
-            rx -= swatch_sz;
-            ImRect sw_bb(ImVec2(rx, sw_y), ImVec2(rx + swatch_sz, sw_y + swatch_sz));
+            rx -= swatch_w;
+            ImRect sw_bb(ImVec2(rx, sw_y), ImVec2(rx + swatch_w, sw_y + swatch_h));
 
             std::string sw_uid = std::string(label.data()) + "_list_sw_" + std::to_string(i);
             RenderInlineSwatch(dl, sw_bb, *colors[i], true, sw_uid.c_str());

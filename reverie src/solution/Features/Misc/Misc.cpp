@@ -124,6 +124,138 @@ static std::string GetPlayerName() {
 	return "user";
 }
 
+namespace {
+	static ImVec2 HudMeasure(ImFont* font, const std::string& text) {
+		return font->CalcTextSizeA(font->LegacySize, FLT_MAX, 0.f, text.c_str());
+	}
+
+	static float HudLineHeight(ImFont* font) {
+		return HudMeasure(font, "A").y;
+	}
+
+	static void HudText(ImDrawList* draw_list, ImFont* font, const ImVec2& pos, ImU32 color, const std::string& text, bool shadow = true) {
+		if (shadow)
+			draw_list->AddText(font, font->LegacySize, ImVec2(std::floor(pos.x + 1.f), std::floor(pos.y + 1.f)), IM_COL32(0, 0, 0, 200), text.c_str());
+
+		draw_list->AddText(font, font->LegacySize, ImVec2(std::floor(pos.x), std::floor(pos.y)), color, text.c_str());
+	}
+
+	static ImVec2 HudFrame(ImDrawList* draw_list, ImFont* font, const ImVec2& pos, const std::string& name,
+		const std::vector<std::string>& first_column, const std::vector<std::string>& second_column, ImU32 accent, int opacity) {
+		const int base_alpha = std::clamp(opacity, 0, 255);
+		const int outline_alpha = std::clamp(static_cast<int>(base_alpha * 0.75f), 0, 255);
+		const float line_height = HudLineHeight(font);
+		const float width = 220.f;
+		const float outline_size = 4.f;
+		const float pad_base = 5.f;
+		const float pad_header_top = 6.f;
+		const float pad_header_sides = 6.f;
+		const float pad_header_bottom = 7.f;
+		const float line_thickness = 4.f;
+
+		const std::string title = name + " (" + std::to_string(first_column.size()) + ")";
+		const ImVec2 title_size = HudMeasure(font, title);
+
+		const ImVec2 line_pos(pos.x + pad_header_sides, pos.y + pad_header_top + title_size.y + 2.f);
+		const ImVec2 line_size(width - pad_header_sides * 2.f, line_thickness);
+
+		const ImVec2 base_pos(line_pos.x, line_pos.y + line_thickness + pad_header_bottom);
+		const ImVec2 base_size(line_size.x, line_height * first_column.size() + pad_base * 2.f);
+
+		const ImVec2 size(width, title_size.y + title_size.y + 2.f + line_thickness + pad_header_bottom + base_size.y);
+		const ImVec2 outline_pos(pos.x - outline_size, pos.y - outline_size);
+		const ImVec2 outline_size_full(size.x + outline_size * 2.f, size.y + outline_size * 2.f);
+
+		/// Outline.
+		draw_list->AddRectFilled(outline_pos, outline_pos + outline_size_full, IM_COL32(0, 0, 0, outline_alpha));
+		draw_list->AddRect(outline_pos - ImVec2(1.f, 1.f), outline_pos + outline_size_full + ImVec2(1.f, 1.f), IM_COL32(0, 0, 0, 220));
+		draw_list->AddRect(outline_pos, outline_pos + outline_size_full, IM_COL32(255, 255, 255, 10));
+
+		/// Inside outline.
+		const ImVec2 this_pos = outline_pos + ImVec2(outline_size, outline_size);
+		draw_list->AddRectFilled(this_pos, this_pos + size, IM_COL32(0, 0, 0, base_alpha));
+		draw_list->AddRect(this_pos + ImVec2(1.f, 1.f), this_pos + size - ImVec2(1.f, 1.f), IM_COL32(255, 255, 255, 10));
+
+		/// Header.
+		const ImVec2 title_pos(line_pos.x + line_size.x * 0.5f - title_size.x * 0.5f, pos.y + pad_header_top);
+		HudText(draw_list, font, title_pos, IM_COL32(255, 255, 255, 200), title);
+
+		const ImU32 accent_second = accent;
+
+		draw_list->AddRectFilledMultiColor(line_pos, line_pos + line_size, accent, accent_second, accent_second, accent);
+		draw_list->AddRectFilled(line_pos, line_pos + ImVec2(line_size.x, line_size.y * 0.5f), IM_COL32(255, 255, 255, 20));
+
+		/// Base.
+		draw_list->AddRectFilled(base_pos, base_pos + base_size, IM_COL32(0, 0, 0, base_alpha));
+		draw_list->AddRect(base_pos, base_pos + base_size, IM_COL32(0, 0, 0, 220));
+		draw_list->AddRect(base_pos + ImVec2(1.f, 1.f), base_pos + base_size - ImVec2(1.f, 1.f), IM_COL32(255, 255, 255, 4));
+
+		draw_list->PushClipRect(pos, pos + size, true);
+
+		if (!first_column.empty()) {
+			ImVec2 builder_pos(base_pos.x + pad_base, base_pos.y + pad_base);
+			for (const auto& item : first_column) {
+				HudText(draw_list, font, builder_pos, IM_COL32(255, 255, 255, 200), item);
+				builder_pos.y += line_height;
+			}
+		}
+
+		if (!second_column.empty()) {
+			ImVec2 builder_pos(base_pos.x + base_size.x - pad_base * 2.f, base_pos.y + pad_base);
+			for (const auto& item : second_column) {
+				const ImVec2 item_size = HudMeasure(font, item);
+				HudText(draw_list, font, ImVec2(builder_pos.x - item_size.x, builder_pos.y), IM_COL32(255, 255, 255, 200), item);
+				builder_pos.y += line_height;
+			}
+		}
+
+		draw_list->PopClipRect();
+
+		return size;
+	}
+
+	struct HudDragState_t {
+		ImVec2 pos{};
+		bool initialized = false;
+		bool dragging = false;
+	};
+
+	static ImVec2 HudDrag(HudDragState_t& state, float& cfg_x, float& cfg_y, const ImVec2& default_pos, const ImVec2& size) {
+		ImGuiIO& io = ImGui::GetIO();
+
+		if (!state.initialized || cfg_x < 0.f || cfg_y < 0.f) {
+			state.pos = (cfg_x >= 0.f && cfg_y >= 0.f) ? ImVec2(cfg_x, cfg_y) : default_pos;
+			state.initialized = true;
+		}
+
+		state.pos.x = std::clamp(state.pos.x, 0.f, std::max(0.f, io.DisplaySize.x - size.x));
+		state.pos.y = std::clamp(state.pos.y, 0.f, std::max(0.f, io.DisplaySize.y - size.y));
+
+		const bool hovered = io.MousePos.x >= state.pos.x - 4.f && io.MousePos.x <= state.pos.x + size.x + 4.f &&
+			io.MousePos.y >= state.pos.y - 4.f && io.MousePos.y <= state.pos.y + size.y + 4.f;
+
+		if (Draw && Draw->opened && hovered && !io.WantCaptureMouse && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+			state.dragging = true;
+
+		if (state.dragging) {
+			if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+				state.pos.x += io.MouseDelta.x;
+				state.pos.y += io.MouseDelta.y;
+				state.pos.x = std::clamp(state.pos.x, 0.f, std::max(0.f, io.DisplaySize.x - size.x));
+				state.pos.y = std::clamp(state.pos.y, 0.f, std::max(0.f, io.DisplaySize.y - size.y));
+			}
+			else {
+				state.dragging = false;
+			}
+
+			cfg_x = state.pos.x;
+			cfg_y = state.pos.y;
+		}
+
+		return state.pos;
+	}
+}
+
 void CMisc::Watermark() {
 	if (!Config::Get<bool>(Vars::Misc::Watermark))
 		return;
@@ -132,83 +264,158 @@ void CMisc::Watermark() {
 	if (!draw_list)
 		return;
 
-	ImGuiIO& io = ImGui::GetIO();
 	ImFont* font = (Var && Var->font.inter[0]) ? Var->font.inter[0] : ImGui::GetFont();
-	const float font_size = font ? font->LegacySize : 14.f;
+	if (!font)
+		return;
 
-	static float last_fps = 0.0f;
-	static float time_accumulator = 0.0f;
-	time_accumulator += io.DeltaTime;
-	if (time_accumulator >= 1.0f) {
-		last_fps = io.Framerate;
-		time_accumulator = 0.0f;
-	}
+	ImGuiIO& io = ImGui::GetIO();
 
-	const bool ingame = EngineClient && EngineClient->InGame();
+	std::string text = xs("сustomflow");
 
-	std::string text1 = "CustomFlow";
-	std::string suffix = "";
+	if (Config::Get<bool>(Vars::Misc::WatermarkUsername))
+		text += " | " + GetPlayerName();
 
-	if (Config::Get<bool>(Vars::Misc::WatermarkFps))
-		suffix += "  " + std::to_string(static_cast<int>(last_fps)) + " fps";
+	const auto net_channel = (EngineClient && EngineClient->InGame()) ? EngineClient->GetNetChannel(0) : nullptr;
 
-	suffix += "  " + std::to_string(GetCPUUsage()) + "% cpu";
+	if (net_channel && Config::Get<bool>(Vars::Misc::WatermarkPing)) {
+		const auto incoming = ctx.controller ? std::max(0, static_cast<int>(ctx.controller->m_iPing())) : 0;
+		const auto outgoing = std::max(0, static_cast<int>(std::round(net_channel->GetAvgLatency() * 1000.f)));
 
-	if (ingame) {
-		if (Config::Get<bool>(Vars::Misc::WatermarkPing))
-			suffix += "  " + std::to_string(GetPing()) + " ms";
-
-		if (Config::Get<bool>(Vars::Misc::WatermarkSpeed))
-			suffix += "  " + std::to_string(GetVelocity()) + " speed";
+		text += " | incoming: " + std::to_string(incoming) + "ms";
+		text += " | outgoing: " + std::to_string(outgoing) + "ms";
 	}
 
 	if (Config::Get<bool>(Vars::Misc::WatermarkTime)) {
-		auto now = std::chrono::system_clock::now();
-		std::time_t now_c = std::chrono::system_clock::to_time_t(now);
-		char time_str[64];
-		std::tm tm_buf;
-		localtime_s(&tm_buf, &now_c);
-		strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm_buf);
-		suffix += "  " + std::string(time_str);
+		const auto time = std::time(nullptr);
+		std::tm time_buf;
+		localtime_s(&time_buf, &time);
+
+		std::ostringstream time_ss;
+		time_ss << std::put_time(&time_buf, " | %H:%M:%S");
+		text += time_ss.str();
 	}
 
-	std::string username = "";
-	if (Config::Get<bool>(Vars::Misc::WatermarkUsername))
-		username = GetPlayerName();
+	const ImVec2 text_size = HudMeasure(font, text);
 
-	ImVec2 text1_size = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, text1.c_str());
-	ImVec2 user_size = username.empty() ? ImVec2(0.f, 0.f) : font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, username.c_str());
-	ImVec2 suffix_size = suffix.empty() ? ImVec2(0.f, 0.f) : font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, suffix.c_str());
+	Color_t accent_color = Config::Get<Color_t>(Vars::Misc::WatermarkAccentColor);
 
-	float total_width = text1_size.x + (username.empty() ? 0.f : user_size.x + 8.f) + suffix_size.x + 10.f;
-	float total_height = (std::max)({ text1_size.y, user_size.y, suffix_size.y });
+	float hue = 0.f, saturation = 0.f, value = 0.f;
+	ImGui::ColorConvertRGBtoHSV(accent_color.Rf(), accent_color.Gf(), accent_color.Bf(), hue, saturation, value);
 
-	float pos_x = io.DisplaySize.x - total_width - 15.f;
-	float pos_y = 15.f;
+	const bool text_inverted = (hue >= 0.2f) && (hue <= 0.6f);
+	const ImU32 text_color = text_inverted ? IM_COL32(0, 0, 0, 255) : IM_COL32(255, 255, 255, 255);
 
-	ImVec2 bg_pos = ImVec2(pos_x - 5.f, pos_y - 2.5f);
-	ImVec2 bg_size = ImVec2(total_width + 10.f, total_height + 6.f);
+	const ImVec2 paddings(5.f, 3.f);
+	const ImVec2 margins(10.f, 10.f);
 
-	const int opacity = std::clamp(Config::Get<int>(Vars::Misc::WatermarkOpacity), 0, 255);
-	DrawGradientRect(bg_pos, bg_size, IM_COL32(0, 0, 0, opacity), draw_list);
+	const ImVec2 pos(io.DisplaySize.x - margins.x - paddings.x * 2.f - text_size.x, margins.y);
+	const ImVec2 size(text_size.x + paddings.x * 2.f, text_size.y + paddings.y * 2.f);
+	const ImVec2 text_pos(pos.x + paddings.x, pos.y + paddings.y);
 
-	float current_x = pos_x;
+	const ImU32 accent = IM_COL32(accent_color.R(), accent_color.G(), accent_color.B(), accent_color.A());
+	draw_list->AddRectFilledMultiColor(pos, pos + size, accent, accent, accent, accent);
 
-	Color_t accent = Config::Get<Color_t>(Vars::Misc::WatermarkAccentColor);
-	ImU32 accent_col = IM_COL32(accent.R(), accent.G(), accent.B(), 255);
+	if (!text_inverted)
+		draw_list->AddText(font, font->LegacySize, ImVec2(text_pos.x + 1.f, text_pos.y + 1.f), IM_COL32(0, 0, 0, 200), text.c_str());
 
-	draw_list->AddText(font, font_size, ImVec2(current_x, pos_y), IM_COL32(255, 255, 255, 255), text1.c_str());
-	current_x += text1_size.x;
+	draw_list->AddText(font, font->LegacySize, text_pos, text_color, text.c_str());
+}
 
-	if (!username.empty()) {
-		current_x += 6.f;
-		draw_list->AddText(font, font_size, ImVec2(current_x, pos_y), accent_col, username.c_str());
-		current_x += user_size.x;
+void CMisc::BindsList() {
+	if (!Config::Get<bool>(Vars::Misc::BindsList))
+		return;
+
+	auto draw_list = ImGui::GetBackgroundDrawList();
+	if (!draw_list)
+		return;
+
+	ImFont* font = (Var && Var->font.inter[0]) ? Var->font.inter[0] : ImGui::GetFont();
+	if (!font)
+		return;
+
+	const auto active_binds = Binds::GetActiveList();
+	if (active_binds.empty())
+		return;
+
+	std::vector<std::string> names;
+	std::vector<std::string> keys;
+	names.reserve(active_binds.size());
+	keys.reserve(active_binds.size());
+
+	for (const auto& bind : active_binds) {
+		names.push_back(bind.name);
+		keys.push_back(bind.key_name);
 	}
 
-	if (!suffix.empty()) {
-		draw_list->AddText(font, font_size, ImVec2(current_x, pos_y), IM_COL32(255, 255, 255, 255), suffix.c_str());
+	Color_t accent_color = Config::Get<Color_t>(Vars::Misc::BindsListColor);
+	const ImU32 accent = IM_COL32(accent_color.R(), accent_color.G(), accent_color.B(), accent_color.A());
+
+	const ImGuiIO& io = ImGui::GetIO();
+	const std::string title = std::string(xs("binds")) + " (" + std::to_string(names.size()) + ")";
+	const float line_height = HudLineHeight(font);
+	const ImVec2 size(220.f, HudMeasure(font, title).y * 2.f + 2.f + 4.f + 7.f + line_height * names.size() + 10.f);
+
+	static HudDragState_t state;
+	const ImVec2 pos = HudDrag(state, Config::Get<float>(Vars::Misc::BindsListPosX), Config::Get<float>(Vars::Misc::BindsListPosY), ImVec2(io.DisplaySize.x - 235.f, 60.f), size);
+
+	HudFrame(draw_list, font, pos, xs("binds"), names, keys, accent, Config::Get<int>(Vars::Misc::BindsListOpacity));
+}
+
+void CMisc::Spectators() {
+	if (!Config::Get<bool>(Vars::Misc::SpectatorList))
+		return;
+
+	if (!ctx.pawn || !ctx.pawn->Alive() || !EntityList)
+		return;
+
+	auto draw_list = ImGui::GetBackgroundDrawList();
+	if (!draw_list)
+		return;
+
+	ImFont* font = (Var && Var->font.inter[0]) ? Var->font.inter[0] : ImGui::GetFont();
+	if (!font)
+		return;
+
+	const CBaseHandle local_handle = ctx.pawn->GetHandle();
+	std::vector<std::string> names;
+
+	for (auto& player : EntityList->players) {
+		if (!player.Fill())
+			continue;
+
+		CCSPlayerController* controller = player.controller;
+		if (!controller || controller == ctx.controller)
+			continue;
+
+		CBaseHandle observer_handle = controller->m_hObserverPawn();
+		if (!observer_handle.Valid())
+			continue;
+
+		auto* observer = observer_handle.get<C_CSPlayerPawn>();
+		if (!observer || observer->m_hObserverTarget() != local_handle)
+			continue;
+
+		const char* name = controller->m_sSanitizedPlayerName();
+		if (!name || !name[0])
+			continue;
+
+		std::string spectator(name);
+		std::transform(spectator.begin(), spectator.end(), spectator.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		names.push_back(std::move(spectator));
 	}
+
+	Color_t accent_color = Config::Get<Color_t>(Vars::Misc::SpectatorListColor);
+	const ImU32 accent = IM_COL32(accent_color.R(), accent_color.G(), accent_color.B(), accent_color.A());
+
+	const ImGuiIO& io = ImGui::GetIO();
+	const std::string title = std::string(xs("spectators")) + " (" + std::to_string(names.size()) + ")";
+	const float line_height = HudLineHeight(font);
+	const ImVec2 size(220.f, HudMeasure(font, title).y * 2.f + 2.f + 4.f + 7.f + line_height * names.size() + 10.f);
+
+	static HudDragState_t state;
+	const ImVec2 pos = HudDrag(state, Config::Get<float>(Vars::Misc::SpectatorListPosX), Config::Get<float>(Vars::Misc::SpectatorListPosY), ImVec2(io.DisplaySize.x - 235.f, 180.f), size);
+
+	HudFrame(draw_list, font, pos, xs("spectators"), names, {}, accent, Config::Get<int>(Vars::Misc::SpectatorListOpacity));
 }
 
 void CMisc::CrosshairIndicators() {
@@ -503,6 +710,8 @@ void CMisc::Indicators() {
 
 void CMisc::OnPresent() {
 	this->Watermark();
+	this->BindsList();
+	this->Spectators();
 	this->Indicators();
 
 	if (!Config::Get<bool>(Vars::Misc::Hitmarker) || !EngineClient->InGame() || !ctx.pawn || !ctx.pawn->Alive()) {

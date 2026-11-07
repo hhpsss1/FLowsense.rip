@@ -49,6 +49,11 @@ struct RageWeaponGroupVars_t {
 	std::uint32_t Multipoints;
 	std::uint32_t MaximumDistance;
 	std::uint32_t TicksPerAimpoint;
+	std::uint32_t StopSpeed;
+	std::uint32_t Resolver;
+	std::uint32_t ResolverMode;
+	std::uint32_t ResolverHitboxPriority;
+	std::uint32_t ResolverYawRange;
 };
 
 #define BIND_RAGE_WEAPON_GROUP(grp) { \
@@ -57,7 +62,8 @@ struct RageWeaponGroupVars_t {
 	grp::PointScale, grp::MaximumFov, grp::BodyPointScale, grp::TargetSelection, \
 	grp::DelayShotEnable, grp::DelayShot, \
 	grp::RemoveRecoil, grp::StrictHitchance, grp::ForceBodyAim, grp::Hitboxes, grp::Multipoints, \
-	grp::MaximumDistance, grp::TicksPerAimpoint \
+	grp::MaximumDistance, grp::TicksPerAimpoint, \
+	grp::StopSpeed, grp::Resolver, grp::ResolverMode, grp::ResolverHitboxPriority, grp::ResolverYawRange \
 } \
 
 enum e_rage_group : int {
