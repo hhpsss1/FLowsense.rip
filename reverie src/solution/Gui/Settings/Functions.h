@@ -19,6 +19,44 @@ struct Vector;
 
 using namespace ImGui;
 
+namespace OtcStyle {
+    inline ImU32 Pack(const ImVec4& c, float a = 1.f) {
+        return IM_COL32(
+            static_cast<int>(c.x * 255.f),
+            static_cast<int>(c.y * 255.f),
+            static_cast<int>(c.z * 255.f),
+            static_cast<int>(c.w * 255.f * a));
+    }
+
+    inline ImU32 Accent(float a = 1.f) { return IM_COL32(181, 0, 41, static_cast<int>(255.f * a)); }
+    inline ImU32 AccentShade(float a = 1.f) { return IM_COL32(156, 0, 16, static_cast<int>(255.f * a)); }
+    inline ImU32 Text(float a = 1.f) { return IM_COL32(206, 206, 206, static_cast<int>(255.f * a)); }
+    inline ImU32 TextDim(float a = 1.f) { return IM_COL32(153, 153, 153, static_cast<int>(255.f * a)); }
+    inline ImU32 Control(float a = 1.f) { return IM_COL32(36, 36, 36, static_cast<int>(190.f * a)); }
+    inline ImU32 Border(float a = 1.f) { return IM_COL32(0, 0, 0, static_cast<int>(255.f * a)); }
+    inline ImU32 Track(float a = 1.f) { return IM_COL32(69, 69, 69, static_cast<int>(190.f * a)); }
+    inline ImU32 CheckOff(float a = 1.f) { return IM_COL32(69, 69, 69, static_cast<int>(255.f * a)); }
+    inline ImU32 GroupFace(float a = 1.f) { return IM_COL32(12, 12, 12, static_cast<int>(72.f * a)); }
+    inline ImU32 GroupLine(float a = 1.f) { return IM_COL32(44, 44, 44, static_cast<int>(180.f * a)); }
+    inline ImU32 WindowFace(float a = 1.f) { return IM_COL32(4, 4, 4, static_cast<int>(175.f * a)); }
+    inline ImU32 WindowLine(float a = 1.f) { return IM_COL32(57, 57, 57, static_cast<int>(210.f * a)); }
+    inline ImU32 WindowBetween(float a = 1.f) { return IM_COL32(35, 35, 35, static_cast<int>(150.f * a)); }
+    inline ImU32 WindowShadow(float a = 1.f) { return IM_COL32(0, 0, 0, static_cast<int>(150.f * a)); }
+    inline ImU32 PanelFace(float a = 1.f) { return IM_COL32(9, 9, 9, static_cast<int>(82.f * a)); }
+    inline ImU32 PanelLine(float a = 1.f) { return IM_COL32(44, 44, 44, static_cast<int>(145.f * a)); }
+    inline ImU32 PanelInner(float a = 1.f) { return IM_COL32(9, 9, 9, static_cast<int>(120.f * a)); }
+    inline ImU32 TabIdle(float a = 1.f) { return IM_COL32(110, 110, 115, static_cast<int>(255.f * a)); }
+    inline ImU32 TabIdleBottom(float a = 1.f) { return IM_COL32(50, 50, 55, static_cast<int>(255.f * a)); }
+}
+
+struct OtcPickerState {
+    ImVec2 marker{ -1.f, -1.f };
+    bool held{ false };
+    bool held_alpha{ false };
+};
+
+bool DrawOtcColorPicker(ImDrawList* dl, const ImVec2& popup_min, Color_t& col, OtcPickerState& state);
+
 enum class EBindType : int {
     hold = 0,
     toggle = 1

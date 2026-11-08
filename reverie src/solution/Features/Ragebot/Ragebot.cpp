@@ -49,6 +49,11 @@ struct RageWeaponGroupVars_t {
 	std::uint32_t Multipoints;
 	std::uint32_t MaximumDistance;
 	std::uint32_t TicksPerAimpoint;
+	std::uint32_t StopSpeed;
+	std::uint32_t Resolver;
+	std::uint32_t ResolverMode;
+	std::uint32_t ResolverHitboxPriority;
+	std::uint32_t ResolverYawRange;
 };
 
 #define BIND_RAGE_WEAPON_GROUP(grp) { \
@@ -57,7 +62,8 @@ struct RageWeaponGroupVars_t {
 	grp::PointScale, grp::MaximumFov, grp::BodyPointScale, grp::TargetSelection, \
 	grp::DelayShotEnable, grp::DelayShot, \
 	grp::RemoveRecoil, grp::StrictHitchance, grp::ForceBodyAim, grp::Hitboxes, grp::Multipoints, \
-	grp::MaximumDistance, grp::TicksPerAimpoint \
+	grp::MaximumDistance, grp::TicksPerAimpoint, \
+	grp::StopSpeed, grp::Resolver, grp::ResolverMode, grp::ResolverHitboxPriority, grp::ResolverYawRange \
 } \
 
 enum e_rage_group : int {
@@ -300,6 +306,44 @@ void CRagebot::SelectPoints(LagRecord* record, std::vector<AimPoint_t>& points, 
 
 size_t CRagebot::SelectBestPoint(ScannedTarget_t* target, std::vector<ScannedPoint_t>& points) {
 	constexpr size_t invalid = static_cast<size_t>(-1);
+	const auto hp = target->player->m_iHealth();
+
+	// --- приоритет убийству (перенесено из чужого рейджа) ---
+	// Сначала ищем выстрел, который убивает, и среди них берём наилучший по хитчансу.
+	auto eval_point = [&](size_t i) {
+		auto& point = points[i];
+		if (point.hitchance < 0.f) {
+			ScannedTarget_t candidate;
+			candidate.player = target->player;
+			candidate.best_point = point;
+			candidate.angle = CalculateAngle(point.point - eye_position);
+			point.hitchance = CalcHitchance(&candidate);
+		}
+	};
+
+	auto best_kill = invalid;
+	auto best_kill_hc = -1.f;
+	for (auto i{ 0uz }; i < points.size(); ++i) {
+		const auto& point = points[i];
+		if (!point.record || point.dont_shoot || !(point.damage >= hp && point.damage > 0.f))
+			continue;
+		eval_point(i);
+		if (points[i].hitchance < required_hitchance)
+			continue;
+		if (best_kill == invalid || points[i].hitchance > best_kill_hc) {
+			best_kill = i;
+			best_kill_hc = points[i].hitchance;
+		}
+	}
+
+	if (best_kill != invalid) {
+		target->best_point = points[best_kill];
+		target->angle = CalculateAngle(target->best_point.point - eye_position);
+		target->hitchance = target->best_point.hitchance;
+		return best_kill;
+	}
+
+	// --- fallback: обычный выбор по урону (тело, потом голова) ---
 	auto select = [&](bool head) {
 		for (;;) {
 			size_t selected = invalid;
@@ -328,7 +372,7 @@ size_t CRagebot::SelectBestPoint(ScannedTarget_t* target, std::vector<ScannedPoi
 	};
 
 	auto body = select(false);
-	auto head = body == invalid || points[body].damage < target->player->m_iHealth() ? select(true) : invalid;
+	auto head = body == invalid || points[body].damage < hp ? select(true) : invalid;
 	if (settings.delay_shot > 0) {
 		int& delay = delayed_ticks[target->player->GetHandle().ToInt()];
 		if (body != invalid && head != invalid) {
@@ -345,7 +389,7 @@ size_t CRagebot::SelectBestPoint(ScannedTarget_t* target, std::vector<ScannedPoi
 	size_t selected = body != invalid ? body : head;
 	if (head != invalid) {
 		float body_damage = body != invalid ? points[body].damage : 0.f;
-		if (body_damage < target->player->m_iHealth() && points[head].damage > body_damage && points[head].record->shooting)
+		if (body_damage < hp && points[head].damage > body_damage && points[head].record->shooting)
 			selected = head;
 	}
 
@@ -1249,6 +1293,25 @@ void CRagebot::GetMultipoints(LagRecord* record, const ScanHitbox_t& hitbox, Aim
 		Vector point = geometry.center + (geometry.Contour(eye_position, view, directions[i]) - geometry.center) * scale;
 		AddMultipoint(points, point, hitbox.index);
 	}
+
+	// --- динамический масштаб точек (перенесено из чужого рейджа) ---
+	// При большой неточности punti сближаются с центром, чтобы не стрелять мимо hitbox-а.
+	if (scale > 0.f && points.count > 1) {
+		float inaccuracy = EnginePrediction->WeaponInaccuracy();
+		if (inaccuracy > 0.001f) {
+			float dist = (geometry.center - eye_position).Length();
+			if (dist > 0.f) {
+				float radius = data.radius > 0.001f ? data.radius : 2.f;
+				for (auto i{ 1uz }; i < points.count; ++i) {
+					Vector delta = points.points[i].point - geometry.center;
+					float effective_r = (radius * 2.f) - delta.Length();
+					float factor = effective_r / (inaccuracy * dist);
+					float probability = std::min(factor * factor, 1.f);
+					points.points[i].point = geometry.center + delta * probability;
+				}
+			}
+		}
+	}
 }
 
 void CRagebot::ReserveTargets(int count) {
@@ -1710,6 +1773,15 @@ bool CRagebot::ApplyAutoStop(int tick_offset) {
 	velocity.z = 0.f;
 
 	float speed = velocity.Length2d();
+
+	// Shift-walk style: if already moving at or below target speed, don't brake hard — just neutralize input
+	if (speed <= target_speed + 5.f) {
+		base->set_forwardmove(0.f);
+		base->set_leftmove(0.f);
+		applied_stop_command = command;
+		return true;
+	}
+
 	float friction = movement->m_flSurfaceFriction();
 	float remaining = grounded ? std::max(0.f, speed - std::max(speed, sv_stopspeed->GetFloat()) * sv_friction->GetFloat() * friction * INTERVAL_PER_TICK) : speed;
 	float acceleration = (grounded ? sv_accelerate : sv_airaccelerate)->GetFloat() * max_speed * friction * INTERVAL_PER_TICK;
@@ -1775,6 +1847,101 @@ bool CRagebot::CalcSpreadValues() {
 	static auto random_seed = reinterpret_cast<CUniformRandomStreamState::Constructor_t>(GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()), xs("??0?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAA@H@Z")));
 	static auto random_float = reinterpret_cast<CUniformRandomStreamState::RandomFloat_t>(GetProcAddress(static_cast<HMODULE>(Memory->Modules.Tier0.Handle()), xs("?RandomFloat@?$CUniformRandomStreamImpl@VCThreadNullMutex@@@@QEAAMMM@Z")));
 	return random_seed && random_float && spread_cache.Update(EnginePrediction->WeaponInaccuracy(), EnginePrediction->WeaponSpread(), ctx.weapon_data->m_bIsRevolver(), random_seed, random_float);
+}
+
+float CRagebot::GetStandingInaccuracy(bool crouched) const {
+	if (!ctx.weapon_data)
+		return EnginePrediction->WeaponInaccuracy();
+
+	if (crouched) {
+		return ctx.weapon_data->m_flInaccuracyCrouch()[0];
+	}
+	return ctx.weapon_data->m_flInaccuracyStand()[0];
+}
+
+CRagebot::StopPrediction_t CRagebot::PredictStop(const Vector& current_eye, const Vector& velocity, bool grounded, bool scoped) const {
+	StopPrediction_t out;
+	out.valid = false;
+
+	const auto speed_2d = velocity.Length2d();
+	const auto accurate_threshold = 0.f; // will use weapon max speed below
+
+	if (!grounded || speed_2d <= 1.f)
+		return out;
+
+	cvar(sv_friction);
+	cvar(sv_stopspeed);
+	cvar(sv_accelerate);
+
+	const auto movement_services = ctx.pawn->m_pMovementServices();
+	float max_move_speed = 250.f;
+	if (movement_services)
+		max_move_speed = movement_services->m_flMaxspeed();
+
+	auto sim_vel = velocity;
+	sim_vel.z = 0.f;
+
+	float surface_friction = 1.f;
+	// surface friction approximated from movement services if available
+
+	for (auto i = 0; i < 15; ++i) {
+		const auto sim_speed = sim_vel.Length2d();
+		if (sim_speed < 1.f)
+			break;
+
+		const auto control = std::fmaxf(sim_speed, sv_stopspeed->GetFloat());
+		const auto drop = sv_friction->GetFloat() * surface_friction * control * INTERVAL_PER_TICK;
+		auto new_speed = std::fmaxf(sim_speed - drop, 0.f);
+		auto accel = sv_accelerate->GetFloat();
+
+		if (scoped && ctx.weapon_data) {
+			const auto weapon_ratio = std::fminf(1.f, ctx.weapon_data->m_flMaxSpeed()[0] / 250.f);
+			const auto scoped_max = std::fmaxf(250.f, max_move_speed) * weapon_ratio * 0.52f;
+			if (new_speed > scoped_max - 5.f) {
+				const auto t = 1.f - std::fmaxf(0.f, new_speed - (scoped_max - 5.f)) / std::fmaxf(0.01f, 5.f);
+				accel *= std::clamp(t, 0.f, 1.f);
+			}
+		}
+
+		const auto accel_speed = std::fminf(accel * ctx.weapon_data->m_flMaxSpeed()[0] * surface_friction * INTERVAL_PER_TICK, new_speed);
+		new_speed = std::fmaxf(new_speed - accel_speed, 0.f);
+
+		if (new_speed > 0.f) {
+			sim_vel *= (new_speed / sim_speed);
+		}
+		else {
+			sim_vel = {};
+			break;
+		}
+	}
+
+	// average velocity over stop time
+	const auto avg_vel = (velocity + sim_vel) * 0.5f;
+
+	// estimate stop ticks using weapon max speed (like the other cheat's calculate_stop_ticks)
+	int stop_ticks = 0;
+	{
+		auto test_speed = speed_2d;
+		for (auto i = 0; i < 32; ++i) {
+			const auto control = std::fmaxf(test_speed, sv_stopspeed->GetFloat());
+			const auto drop = sv_friction->GetFloat() * surface_friction * control * INTERVAL_PER_TICK;
+			test_speed = std::fmaxf(test_speed - drop, 0.f);
+			++stop_ticks;
+			if (test_speed < 1.f)
+				break;
+		}
+	}
+
+	const auto stop_time = static_cast<float>(stop_ticks) * INTERVAL_PER_TICK;
+
+	out.eye = {
+		current_eye.x + avg_vel.x * stop_time,
+		current_eye.y + avg_vel.y * stop_time,
+		current_eye.z
+	};
+	out.inaccuracy = GetStandingInaccuracy(false);
+	out.valid = true;
+	return out;
 }
 
 void CRagebot::PrepareHitchance(const LagRecord& record) {

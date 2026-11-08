@@ -578,6 +578,7 @@ struct C_CSPlayerPawn : C_BaseEntity {
 	FindField(bool, m_bInBuyZone, xs("C_CSPlayerPawn"), xs("m_bInBuyZone"));
 	FindField(CBaseHandle, m_hHudModelArms, xs("C_CSPlayerPawn"), xs("m_hHudModelArms"));
 	FindField(CBaseHandle, m_hController, xs("C_BasePlayerPawn"), xs("m_hController"));
+	FindField(CBaseHandle, m_hObserverTarget, xs("C_BasePlayerPawn"), xs("m_hObserverTarget"));
 	FindField(float, m_grenadeParameterStashTime, xs("C_CSPlayerPawn"), xs("m_grenadeParameterStashTime"));
 	FindField(bool, m_bGrenadeParametersStashed, xs("C_CSPlayerPawn"), xs("m_bGrenadeParametersStashed"));
 	FindField(Vector, m_angStashedShootAngles, xs("C_CSPlayerPawn"), xs("m_angStashedShootAngles"));

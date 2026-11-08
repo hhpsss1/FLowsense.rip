@@ -1245,7 +1245,7 @@ namespace {
 		ImFont* ab_font = PvPickFont(Config::Get<int>(grp.AmmoBarFont));
 		ImFont* arb_font = PvPickFont(Config::Get<int>(grp.ArmorBarFont));
 
-		const char* demo_name = xs("CustomFlow");
+		const char* demo_name = xs("customflow");
 		const std::string demo_weapon = xs("ssg08");
 		const float demo_health = 22.f + (sinf((float)ImGui::GetTime() * 0.5f) * 0.5f + 0.5f) * 78.f;
 		const float demo_ammo = 7.f;

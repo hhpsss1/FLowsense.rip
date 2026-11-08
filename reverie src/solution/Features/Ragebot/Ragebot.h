@@ -471,6 +471,15 @@ private:
 		std::vector<TracePoint_t> points;
 	};
 
+	// --- предсказание остановки (перенесено из чужого рейджа) ---
+	struct StopPrediction_t {
+		Vector eye;
+		float inaccuracy = 0.f;
+		bool valid = false;
+	};
+	StopPrediction_t PredictStop(const Vector& current_eye, const Vector& velocity, bool grounded, bool scoped) const;
+	float GetStandingInaccuracy(bool crouched) const;
+
 	struct DebugPoint_t {
 		Vector point;
 		float damage = 0.f;

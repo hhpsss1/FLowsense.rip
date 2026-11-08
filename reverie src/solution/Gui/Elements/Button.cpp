@@ -1,11 +1,6 @@
 #include "../settings/Functions.h"
 
 bool CGui::Buttton(std::string_view label, const ImVec2& size_arg) {
-    struct C_ButtonState {
-        bool clicked{ false };
-        float alpha{ 0 };
-    };
-
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems)
         return false;
@@ -14,35 +9,35 @@ bool CGui::Buttton(std::string_view label, const ImVec2& size_arg) {
     const ImGuiStyle& style = g.Style;
     const ImGuiID id = window->GetID(label.data());
 
-    ImVec2 pos = window->DC.CursorPos;
+    const ImVec2 pos = window->DC.CursorPos;
+
     ImVec2 size = size_arg;
+    if (size.x == 0.f)
+        size.x = 150.f;
+    if (size.y == 0.f)
+        size.y = 20.f;
 
-    if (size_arg.x == 0)
-        size.x = GetContentRegionAvail().x;
-    if (size_arg.y == 0)
-        size.y = Elements->button.height;
+    const float bx = pos.x + 20.f;
+    const float by = pos.y;
+    const ImRect rect(ImVec2(bx, by), ImVec2(bx + size.x, by + size.y));
 
-    const ImRect rect(pos, pos + size);
-    ItemSize(size, style.FramePadding.y);
+    ItemSize(ImVec2(size.x + 20.f, 25.f), style.FramePadding.y);
     if (!ItemAdd(rect, id))
         return false;
 
     bool hovered, held;
     bool pressed = ButtonBehavior(rect, id, &hovered, &held, 0);
 
-    C_ButtonState* state = Gui->AnimContainer(&state, id);
+    ImDrawList* dl = window->DrawList;
+    dl->AddRectFilled(rect.Min - ImVec2(1.f, 1.f), rect.Max + ImVec2(1.f, 1.f), OtcStyle::Border());
+    dl->AddRectFilled(rect.Min, rect.Max, OtcStyle::Control(1.f));
 
-    if (pressed)
-        state->clicked = true;
-
-    state->alpha = ImClamp(state->alpha + (Gui->FixedSpeed(8.f) * (state->clicked ? 1.f : -1.f)), 0.f, 1.f);
-
-    if (state->alpha > 0.9f)
-        state->clicked = false;
-
-    Draw->RectFilled(window->DrawList, rect.Min, rect.Max, Draw->GetClr(Colors->button.background), Elements->button.rounding);
-    Draw->RectFilled(window->DrawList, rect.Min, rect.Max, Draw->GetClr(Colors->accent, state->alpha), Elements->button.rounding);
-    Draw->TextClipped(window->DrawList, Var->font.inter[2], rect.Min - ImVec2(0, 1), rect.Max - ImVec2(0, 1), Draw->GetClr(Colors->button.text), label.data(), NULL, NULL, ImVec2(0.5f, 0.5f));
+    ImFont* font = Var->font.inter[2] ? Var->font.inter[2] : Var->font.inter[0];
+    if (font) {
+        const ImVec2 text_size = font->CalcTextSizeA(font->LegacySize, FLT_MAX, -1.f, label.data());
+        const ImVec2 text_pos(ImFloor(rect.Min.x + (size.x - text_size.x) * 0.5f), ImFloor(rect.Min.y + (size.y - text_size.y) * 0.5f));
+        dl->AddText(font, font->LegacySize, text_pos, OtcStyle::Text(), label.data());
+    }
 
     return pressed;
 }

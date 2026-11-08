@@ -126,10 +126,10 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
     const ImVec2 pos = window->DC.CursorPos;
     const ImRect rect(pos, ImVec2(pos.x + avail, pos.y + row_h));
 
-    const float label_w  = ImFloor(avail * label_frac);
-    const float track_y  = ImFloor(pos.y + row_h * 0.5f);
-    const float track_x0 = pos.x + label_w + knob_r_hover;
-    const float track_x1 = pos.x + avail - knob_r_hover - (has_gear ? (gear_sz + gear_pad) : 0.f);
+    const float label_w  = 0.f;
+    const float track_y  = ImFloor(pos.y + 15.f);
+    const float track_x0 = pos.x + 20.f;
+    const float track_x1 = track_x0 + 150.f;
     const float track_w  = ImMax(track_x1 - track_x0, 1.f);
 
     const ImRect slider_bb(ImVec2(track_x0 - 2.f, track_y - 9.f), ImVec2(track_x1 + 2.f, track_y + 9.f));
@@ -152,6 +152,11 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
 
     bool value_changed = false;
     bool just_opened_edit = false;
+
+    const ImRect minus_bb(ImVec2(track_x0 - 22.f, track_y - 4.f), ImVec2(track_x0 - 6.f, track_y + 11.f));
+    const ImRect plus_bb(ImVec2(track_x1 + 6.f, track_y - 4.f), ImVec2(track_x1 + 22.f, track_y + 11.f));
+    const bool minus_clicked = !state->editing && minus_bb.Contains(g.IO.MousePos) && g.IO.MouseClicked[0];
+    const bool plus_clicked = !state->editing && plus_bb.Contains(g.IO.MousePos) && g.IO.MouseClicked[0];
 
     if (!state->editing) {
         const bool want_edit = (hovered && g.IO.MouseClicked[1]) || (hovered && g.IO.KeyCtrl && g.IO.MouseClicked[0]);
@@ -178,6 +183,11 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
         ImGui::PushStyleVar(ImGuiStyleVar_GrabMinSize, 0.0f);
         value_changed = ImGui::SliderBehavior(slider_bb, id, data_type, p_data, p_min, p_max, format, flags, &grab_bb);
         ImGui::PopStyleVar();
+
+        if (minus_clicked && ApplySliderStep(data_type, p_data, p_min, p_max, -1.f))
+            value_changed = true;
+        if (plus_clicked && ApplySliderStep(data_type, p_data, p_min, p_max, 1.f))
+            value_changed = true;
 
         if (hovered && !is_active && g.IO.MouseWheel != 0.f) {
             if (ApplyMouseStep(data_type, p_data, p_min, p_max, (int)g.IO.MouseWheel))
@@ -213,48 +223,40 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
     state->edit_alpha = ImClamp(state->edit_alpha + Gui->FixedSpeed(14.f) * (state->editing ? 1.f : -1.f), 0.f, 1.f);
 
     ImDrawList* dl = window->DrawList;
-    const float glow_t = ImMax(state->hover, state->active);
 
     if (font && label && label[0]) {
-        ImVec4 tc = Colors->slider.text.Value;
-        tc.w = 0.65f + glow_t * 0.35f;
-        Draw->TextClipped(dl, font, ImVec2(pos.x, pos.y), ImVec2(pos.x + label_w - 8.f, pos.y + row_h), Draw->GetClr(ImColor(tc)), label, nullptr, nullptr, ImVec2(0.f, 0.5f));
+        Draw->TextClipped(dl, font, ImVec2(pos.x + 20.f, pos.y - 3.f), ImVec2(pos.x + avail, pos.y - 3.f + font->LegacySize), OtcStyle::Text(), label, nullptr, nullptr, ImVec2(0.f, 0.f));
     }
 
     const float value_ratio = SliderValueRatio(data_type, p_data, p_min, p_max);
     const float knob_x = track_x0 + value_ratio * track_w;
 
-    const ImVec2 track_min(track_x0, track_y - track_h * 0.5f);
-    const ImVec2 track_max(track_x1, track_y + track_h * 0.5f);
-    const float  track_rnd = 0.f;
+    const ImVec2 track_min(track_x0, track_y);
+    const ImVec2 track_max(track_x1, track_y + 6.f);
+    const float track_alpha = 1.f - state->edit_alpha * 0.85f;
 
     {
-        const float track_alpha = 1.f - state->edit_alpha * 0.85f;
-        Draw->RectFilled(dl, track_min, track_max, Draw->GetClr(Colors->slider.background, track_alpha), track_rnd);
+        dl->AddRectFilledMultiColor(track_min, track_max, OtcStyle::Track(), OtcStyle::Track(), IM_COL32(44, 44, 44, 255), IM_COL32(44, 44, 44, 255));
 
         if (knob_x - track_x0 > 0.5f) {
             const ImVec2 fill_max(knob_x, track_max.y);
-
-            if (glow_t > 0.001f) {
-                ImVec4 gc = Colors->accent.Value;
-                for (int i = 1; i <= 3; ++i) {
-                    float off = (float)i * 1.5f;
-                    gc.w = (0.20f / (float)i) * glow_t * track_alpha;
-                    dl->AddRect(ImVec2(track_min.x - off, track_min.y - off), ImVec2(fill_max.x + off, fill_max.y + off), Draw->GetClr(ImColor(gc)), track_rnd + off, 0, 1.f);
-                }
-            }
-
-            Draw->RectFilled(dl, track_min, fill_max, Draw->GetClr(Colors->accent, track_alpha), track_rnd);
+            dl->AddRectFilledMultiColor(track_min, fill_max, OtcStyle::Accent(), OtcStyle::Accent(), OtcStyle::AccentShade(), OtcStyle::AccentShade());
         }
 
-        const float kr = ImLerp(knob_r, knob_r_hover, glow_t);
-        const ImVec2 kc(knob_x, track_y);
+        dl->AddRect(track_min - ImVec2(1.f, 1.f), track_max + ImVec2(1.f, 1.f), OtcStyle::Border(track_alpha));
 
-        dl->AddCircleFilled(ImVec2(kc.x, kc.y + 1.f), kr + 1.5f, IM_COL32(0, 0, 0, (int)(70.f * track_alpha)), 24);
-        if (glow_t > 0.001f)
-            dl->AddCircleFilled(kc, kr + 3.f, Draw->GetClr(Colors->accent, 0.25f * glow_t * track_alpha), 24);
+        if (font) {
+            const float tw = font->CalcTextSizeA(font->LegacySize, FLT_MAX, -1.f, value_buf, value_buf_end).x;
+            const float plus_x = track_x1 + 10.f;
+            const float left_x = ImMin(knob_x - tw * 0.5f, plus_x - tw - 1.f);
+            const float tx = ImMax(track_x0 + 1.f, left_x);
+            dl->AddText(font, font->LegacySize, ImVec2(tx, track_y), IM_COL32(255, 255, 255, static_cast<int>(255.f * track_alpha)), value_buf, value_buf_end);
+        }
+    }
 
-        dl->AddCircleFilled(kc, kr, IM_COL32(236, 236, 240, (int)(255.f * track_alpha)), 24);
+    if (font) {
+        dl->AddText(font, font->LegacySize, ImVec2(track_x0 - 18.f, track_y - 4.f), IM_COL32(210, 210, 210, 255), "-");
+        dl->AddText(font, font->LegacySize, ImVec2(track_x1 + 10.f, track_y - 4.f), IM_COL32(210, 210, 210, 255), "+");
     }
 
     if (font && state->editing) {
@@ -327,53 +329,9 @@ bool SliderScalar(const char* label, ImGuiDataType data_type, void* p_data, cons
             state->editing = false;
     }
 
-    if (font && state->bubble > 0.01f) {
-        const float a = state->bubble;
-        const float ease = 1.f - (1.f - a) * (1.f - a);
-
-        ImVec2 ts = font->CalcTextSizeA(font->LegacySize, FLT_MAX, -1.f, value_buf, value_buf_end);
-        const float bw = ImMax(ts.x + 16.f, 30.f);
-        const float bh = bubble_h;
-
-        const float slide = (1.f - ease) * 4.f;
-        const float y1 = track_y - knob_r_hover - bubble_gap + slide;
-        const float y0 = y1 - bh;
-        float x0 = ImFloor(knob_x - bw * 0.5f);
-        float x1 = x0 + bw;
-
-        if (x0 < pos.x) {
-            x0 = pos.x;
-            x1 = x0 + bw;
-        }
-
-        if (x1 > pos.x + avail) {
-            x1 = pos.x + avail;
-            x0 = x1 - bw;
-        }
-
-        dl->PushClipRectFullScreen();
-
-        dl->AddRectFilled(ImVec2(x0 - 1.f, y0), ImVec2(x1 + 1.f, y1 + 2.f), IM_COL32(0, 0, 0, (int)(60.f * ease)), 6.f);
-        Draw->RectFilled(dl, ImVec2(x0, y0), ImVec2(x1, y1), Draw->GetClr(Colors->slider.background, ease), 5.f);
-        dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), Draw->GetClr(Colors->accent, 0.45f * ease), 5.f, 0, 1.f);
-
-        {
-            const float px = ImClamp(knob_x, x0 + 6.f, x1 - 6.f);
-            dl->AddTriangleFilled(ImVec2(px - 4.f, y1), ImVec2(px + 4.f, y1), ImVec2(px, y1 + 4.f), Draw->GetClr(Colors->slider.background, ease));
-            dl->AddLine(ImVec2(px - 4.f, y1), ImVec2(px, y1 + 4.f), Draw->GetClr(Colors->accent, 0.45f * ease), 1.f);
-            dl->AddLine(ImVec2(px + 4.f, y1), ImVec2(px, y1 + 4.f), Draw->GetClr(Colors->accent, 0.45f * ease), 1.f);
-        }
-
-        ImVec4 vc = Colors->slider.value.Value;
-        vc.w = ease;
-        Draw->TextClipped(dl, font, ImVec2(x0, y0), ImVec2(x1, y1), Draw->GetClr(ImColor(vc)), value_buf, value_buf_end, nullptr, ImVec2(0.5f, 0.5f));
-
-        dl->PopClipRect();
-    }
-
     if (out_gear_bb) {
-        const float gx = track_x1 + knob_r_hover + gear_pad;
-        *out_gear_bb = ImRect(ImVec2(gx, track_y - gear_sz * 0.5f), ImVec2(gx + gear_sz, track_y + gear_sz * 0.5f));
+        const float gx = pos.x + avail - gear_sz;
+        *out_gear_bb = ImRect(ImVec2(gx, pos.y - 4.f), ImVec2(gx + gear_sz, pos.y - 4.f + gear_sz));
     }
 
     window->DC.CursorPos = next_item_cursor_pos;
@@ -481,7 +439,7 @@ bool CGui::SliderTrack(const char* str_id, const ImVec2 & bb_min, const ImVec2 &
     const float track_rnd = 0.f;
 
     {
-        const float track_alpha = (1.f - state->edit_alpha * 0.85f) * alpha;
+        const float track_alpha = 1.f - state->edit_alpha * 0.85f;
         Draw->RectFilled(dl, track_min, track_max, Draw->GetClr(Colors->slider.background, track_alpha), track_rnd);
 
         if (knob_x - track_x0 > 0.5f) {

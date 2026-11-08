@@ -39,7 +39,7 @@ struct CVariables {
 
 	struct {
 		ImGuiWindowFlags flags{ ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground };
-		ImVec2 size{ 760.f, 560.f };
+		ImVec2 size{ 522.f, 560.f };
 
 		ImVec2 padding{ 0, 0 };
 		ImVec2 spacing{ 0, 0 };

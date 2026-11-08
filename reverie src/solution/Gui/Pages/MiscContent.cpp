@@ -24,10 +24,17 @@ void CGui::RenderMiscContent() {
 			this->CheckboxEx(xs("Watermark"), &Config::Get<bool>(Vars::Misc::Watermark), false, watermark_color, 1, [this]() {
 				this->Checkbox(xs("Show Username"), &Config::Get<bool>(Vars::Misc::WatermarkUsername));
 				this->Checkbox(xs("Show Ping"), &Config::Get<bool>(Vars::Misc::WatermarkPing));
-				this->Checkbox(xs("Show FPS"), &Config::Get<bool>(Vars::Misc::WatermarkFps));
-				this->Checkbox(xs("Show Speed"), &Config::Get<bool>(Vars::Misc::WatermarkSpeed));
 				this->Checkbox(xs("Show Time"), &Config::Get<bool>(Vars::Misc::WatermarkTime));
-				this->SliderInt(xs("Watermark Opacity"), &Config::Get<int>(Vars::Misc::WatermarkOpacity), 0, 255);
+			});
+
+			Color_t* binds_color[1] = { &Config::Get<Color_t>(Vars::Misc::BindsListColor) };
+			this->CheckboxEx(xs("Binds List"), &Config::Get<bool>(Vars::Misc::BindsList), false, binds_color, 1, [this]() {
+				this->SliderInt(xs("Binds List Opacity"), &Config::Get<int>(Vars::Misc::BindsListOpacity), 0, 255);
+			});
+
+			Color_t* spectators_color[1] = { &Config::Get<Color_t>(Vars::Misc::SpectatorListColor) };
+			this->CheckboxEx(xs("Spectator List"), &Config::Get<bool>(Vars::Misc::SpectatorList), false, spectators_color, 1, [this]() {
+				this->SliderInt(xs("Spectator List Opacity"), &Config::Get<int>(Vars::Misc::SpectatorListOpacity), 0, 255);
 			});
 
 			this->CheckboxEx(xs("Indicators"), &Config::Get<bool>(Vars::Misc::Indicators), false, nullptr, 0, [this]() {
